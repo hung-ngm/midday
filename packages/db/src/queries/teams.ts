@@ -1,5 +1,16 @@
 import type { Database } from "@db/client";
-import { bankConnections, teams, users, usersOnTeam } from "@db/schema";
+import {
+  bankConnections,
+  teams,
+  transactionCategories,
+  users,
+  usersOnTeam,
+} from "@db/schema";
+import {
+  CATEGORIES,
+  getTaxRateForCategory,
+  getTaxTypeForCountry,
+} from "@midday/categories";
 import { and, eq } from "drizzle-orm";
 
 export const getTeamById = async (db: Database, id: string) => {
@@ -61,38 +72,125 @@ type CreateTeamParams = {
   switchTeam?: boolean;
 };
 
-export const createTeam = async (db: Database, params: CreateTeamParams) => {
-  const [newTeam] = await db
-    .insert(teams)
-    .values({
-      name: params.name,
-      baseCurrency: params.baseCurrency,
-      countryCode: params.countryCode,
-      logoUrl: params.logoUrl,
-      email: params.email,
-    })
-    .returning({ id: teams.id });
+// Helper function to create system categories for a new team
+async function createSystemCategoriesForTeam(
+  db: Database,
+  teamId: string,
+  countryCode: string | null | undefined,
+) {
+  // Since teams have no previous categories on creation, we can insert all categories directly
+  const categoriesToInsert: Array<typeof transactionCategories.$inferInsert> =
+    [];
 
-  if (!newTeam?.id) {
+  // First, add all parent categories
+  for (const parent of CATEGORIES) {
+    const taxRate = getTaxRateForCategory(countryCode, parent.slug);
+    const taxType = getTaxTypeForCountry(countryCode);
+
+    categoriesToInsert.push({
+      teamId,
+      name: parent.name,
+      slug: parent.slug,
+      color: parent.color,
+      system: parent.system,
+      excluded: parent.excluded,
+      taxRate: taxRate > 0 ? taxRate : null,
+      taxType: taxRate > 0 ? taxType : null,
+      taxReportingCode: undefined,
+      description: undefined,
+      parentId: undefined, // Parent categories have no parent
+    });
+  }
+
+  // Insert all parent categories first
+  const insertedParents = await db
+    .insert(transactionCategories)
+    .values(categoriesToInsert)
+    .returning({
+      id: transactionCategories.id,
+      slug: transactionCategories.slug,
+    });
+
+  // Create a map of parent slug to parent ID for child category references
+  const parentSlugToId = new Map(
+    insertedParents.map((parent) => [parent.slug, parent.id]),
+  );
+
+  // Now add all child categories with proper parent references
+  const childCategoriesToInsert: Array<
+    typeof transactionCategories.$inferInsert
+  > = [];
+
+  for (const parent of CATEGORIES) {
+    const parentId = parentSlugToId.get(parent.slug);
+    if (parentId) {
+      for (const child of parent.children) {
+        const taxRate = getTaxRateForCategory(countryCode, child.slug);
+        const taxType = getTaxTypeForCountry(countryCode);
+
+        childCategoriesToInsert.push({
+          teamId,
+          name: child.name,
+          slug: child.slug,
+          color: child.color,
+          system: child.system,
+          excluded: child.excluded,
+          taxRate: taxRate > 0 ? taxRate : null,
+          taxType: taxRate > 0 ? taxType : null,
+          taxReportingCode: undefined,
+          description: undefined,
+          parentId: parentId,
+        });
+      }
+    }
+  }
+
+  // Insert all child categories
+  if (childCategoriesToInsert.length > 0) {
+    await db.insert(transactionCategories).values(childCategoriesToInsert);
+  }
+}
+
+export const createTeam = async (db: Database, params: CreateTeamParams) => {
+  try {
+    const [newTeam] = await db
+      .insert(teams)
+      .values({
+        name: params.name,
+        baseCurrency: params.baseCurrency,
+        countryCode: params.countryCode,
+        logoUrl: params.logoUrl,
+        email: params.email,
+      })
+      .returning({ id: teams.id });
+
+    if (!newTeam?.id) {
+      throw new Error("Failed to create team.");
+    }
+
+    // Add user to team membership
+    await db.insert(usersOnTeam).values({
+      userId: params.userId,
+      teamId: newTeam.id,
+      role: "owner",
+    });
+
+    // Create system categories for the new team
+    await createSystemCategoriesForTeam(db, newTeam.id, params.countryCode);
+
+    // Optionally switch user to the new team
+    if (params.switchTeam) {
+      await db
+        .update(users)
+        .set({ teamId: newTeam.id })
+        .where(eq(users.id, params.userId));
+    }
+
+    return newTeam.id;
+  } catch (error) {
+    console.error(error);
     throw new Error("Failed to create team.");
   }
-
-  // Add user to team membership
-  await db.insert(usersOnTeam).values({
-    userId: params.userId,
-    teamId: newTeam.id,
-    role: "owner",
-  });
-
-  // Optionally switch user to the new team
-  if (params.switchTeam) {
-    await db
-      .update(users)
-      .set({ teamId: newTeam.id })
-      .where(eq(users.id, params.userId));
-  }
-
-  return newTeam.id;
 };
 
 export async function getTeamMembers(db: Database, teamId: string) {

@@ -1,6 +1,13 @@
 import type { Database } from "@db/client";
-import { transactionCategories } from "@db/schema";
+import {
+  transactionCategories,
+  transactionCategoryEmbeddings,
+} from "@db/schema";
 import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import {
+  generateCategoryEmbedding,
+  generateCategoryEmbeddingsBatch,
+} from "../utils/embeddings";
 import { createActivity } from "./activities";
 
 export type GetCategoriesParams = {
@@ -25,6 +32,8 @@ export const getCategories = async (
       system: transactionCategories.system,
       taxRate: transactionCategories.taxRate,
       taxType: transactionCategories.taxType,
+      taxReportingCode: transactionCategories.taxReportingCode,
+      excluded: transactionCategories.excluded,
       parentId: transactionCategories.parentId,
     })
     .from(transactionCategories)
@@ -35,7 +44,7 @@ export const getCategories = async (
       ),
     )
     .orderBy(
-      desc(transactionCategories.createdAt),
+      desc(transactionCategories.system),
       asc(transactionCategories.name),
     )
     .limit(limit);
@@ -51,6 +60,8 @@ export const getCategories = async (
       system: transactionCategories.system,
       taxRate: transactionCategories.taxRate,
       taxType: transactionCategories.taxType,
+      taxReportingCode: transactionCategories.taxReportingCode,
+      excluded: transactionCategories.excluded,
       parentId: transactionCategories.parentId,
     })
     .from(transactionCategories)
@@ -88,6 +99,7 @@ export type CreateTransactionCategoryParams = {
   description?: string | null;
   taxRate?: number | null;
   taxType?: string | null;
+  taxReportingCode?: string | null;
   parentId?: string | null;
 };
 
@@ -103,6 +115,7 @@ export const createTransactionCategory = async (
     description,
     taxRate,
     taxType,
+    taxReportingCode,
     parentId,
   } = params;
 
@@ -115,6 +128,7 @@ export const createTransactionCategory = async (
       description,
       taxRate,
       taxType,
+      taxReportingCode,
       parentId,
     })
     .returning();
@@ -134,8 +148,20 @@ export const createTransactionCategory = async (
         categoryDescription: result.description,
         taxRate: result.taxRate,
         taxType: result.taxType,
+        taxReportingCode: result.taxReportingCode,
         parentId: result.parentId,
       },
+    });
+
+    // Generate embedding for the new category (async, don't block the response)
+    generateCategoryEmbedding(db, {
+      name: result.name,
+      system: false, // User-created category
+    }).catch((error) => {
+      console.error(
+        `Failed to generate embedding for category "${result.name}":`,
+        error,
+      );
     });
   }
 
@@ -151,6 +177,7 @@ export type CreateTransactionCategoriesParams = {
     description?: string | null;
     taxRate?: number | null;
     taxType?: string | null;
+    taxReportingCode?: string | null;
     parentId?: string | null;
   }[];
 };
@@ -190,13 +217,54 @@ export const createTransactionCategories = async (
         categoryDescription: category.description,
         taxRate: category.taxRate,
         taxType: category.taxType,
+        taxReportingCode: category.taxReportingCode,
         parentId: category.parentId,
       },
     });
   }
 
+  // Generate embeddings for all new categories (async, don't block the response)
+  if (result.length > 0) {
+    const categoryNames = result.map((category) => ({
+      name: category.name,
+      system: false, // User-created categories
+    }));
+
+    generateCategoryEmbeddingsBatch(db, categoryNames).catch((error) => {
+      console.error(
+        "Failed to generate embeddings for batch categories:",
+        error,
+      );
+    });
+  }
+
   return result;
 };
+
+/**
+ * Clean up unused category embedding
+ * Only deletes the embedding if no other categories use the same name
+ */
+async function cleanupUnusedCategoryEmbedding(
+  db: Database,
+  categoryName: string,
+): Promise<void> {
+  // Check if any other categories still use this name
+  const categoriesWithSameName = await db
+    .select({ id: transactionCategories.id })
+    .from(transactionCategories)
+    .where(eq(transactionCategories.name, categoryName))
+    .limit(1);
+
+  // If no categories use this name anymore, delete the embedding
+  if (categoriesWithSameName.length === 0) {
+    await db
+      .delete(transactionCategoryEmbeddings)
+      .where(eq(transactionCategoryEmbeddings.name, categoryName));
+
+    console.log(`Cleaned up unused embedding for category: "${categoryName}"`);
+  }
+}
 
 export type UpdateTransactionCategoryParams = {
   id: string;
@@ -206,6 +274,7 @@ export type UpdateTransactionCategoryParams = {
   description?: string | null;
   taxRate?: number | null;
   taxType?: string | null;
+  taxReportingCode?: string | null;
   parentId?: string | null;
 };
 
@@ -214,6 +283,23 @@ export const updateTransactionCategory = async (
   params: UpdateTransactionCategoryParams,
 ) => {
   const { id, teamId, ...updates } = params;
+
+  // If name is being updated, get the current category first
+  let oldName: string | undefined;
+  if (updates.name) {
+    const [currentCategory] = await db
+      .select({ name: transactionCategories.name })
+      .from(transactionCategories)
+      .where(
+        and(
+          eq(transactionCategories.id, id),
+          eq(transactionCategories.teamId, teamId),
+        ),
+      )
+      .limit(1);
+
+    oldName = currentCategory?.name;
+  }
 
   const [result] = await db
     .update(transactionCategories)
@@ -225,6 +311,19 @@ export const updateTransactionCategory = async (
       ),
     )
     .returning();
+
+  // If the name was updated, regenerate the embedding
+  if (result && updates.name && oldName && updates.name !== oldName) {
+    generateCategoryEmbedding(db, {
+      name: updates.name,
+      system: result.system || false,
+    }).catch((error) => {
+      console.error(
+        `Failed to update embedding for category "${updates.name}":`,
+        error,
+      );
+    });
+  }
 
   return result;
 };
