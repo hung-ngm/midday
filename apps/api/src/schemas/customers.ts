@@ -15,7 +15,9 @@ export const getCustomersSchema = z
         },
       }),
     sort: z
-      .array(z.string(), z.string())
+      .array(z.string().min(1))
+      .max(2)
+      .min(2)
       .nullable()
       .optional()
       .openapi({
@@ -199,6 +201,40 @@ export const getCustomerByIdSchema = z.object({
       in: "path",
       name: "id",
     },
+  }),
+});
+
+export const getCustomerInvoiceSummarySchema = z.object({
+  id: z.string().openapi({
+    description: "Unique identifier of the customer",
+    example: "b3b7c1e2-4c2a-4e7a-9c1a-2b7c1e24c2a4",
+    param: {
+      in: "path",
+      name: "id",
+    },
+  }),
+});
+
+export const customerInvoiceSummaryResponseSchema = z.object({
+  totalAmount: z.number().openapi({
+    description: "Total amount of all invoices",
+    example: 10021.5,
+  }),
+  paidAmount: z.number().openapi({
+    description: "Total amount of paid invoices",
+    example: 5320.5,
+  }),
+  outstandingAmount: z.number().openapi({
+    description: "Total amount of unpaid and overdue invoices",
+    example: 4701.0,
+  }),
+  invoiceCount: z.number().openapi({
+    description: "Total number of invoices",
+    example: 5,
+  }),
+  currency: z.string().openapi({
+    description: "Currency code",
+    example: "EUR",
   }),
 });
 

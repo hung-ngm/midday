@@ -10,11 +10,9 @@ export function InvoicesPaid() {
   const trpc = useTRPC();
   const { data } = useSuspenseQuery(
     trpc.invoice.invoiceSummary.queryOptions({
-      status: "paid",
+      statuses: ["paid"],
     }),
   );
-
-  const totalInvoiceCount = data?.at(0)?.invoiceCount;
 
   return (
     <button
@@ -26,11 +24,7 @@ export function InvoicesPaid() {
       }
       className="hidden sm:block text-left"
     >
-      <InvoiceSummary
-        data={data}
-        totalInvoiceCount={totalInvoiceCount ?? 0}
-        title="Paid"
-      />
+      <InvoiceSummary data={data} title="Paid" />
     </button>
   );
 }

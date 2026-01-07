@@ -8,10 +8,19 @@ export function InvoiceStatus({
   status,
   isLoading,
   className,
+  textOnly = false,
 }: {
-  status?: "draft" | "overdue" | "paid" | "unpaid" | "canceled" | "scheduled";
+  status?:
+    | "draft"
+    | "overdue"
+    | "paid"
+    | "unpaid"
+    | "canceled"
+    | "scheduled"
+    | "refunded";
   isLoading?: boolean;
   className?: string;
+  textOnly?: boolean;
 }) {
   const t = useI18n();
 
@@ -23,10 +32,30 @@ export function InvoiceStatus({
     return null;
   }
 
+  // Text-only mode for PDF rendering
+  if (textOnly) {
+    return (
+      <span
+        className={cn(
+          (status === "draft" || status === "canceled") &&
+            "text-[#878787] dark:text-[#878787]",
+          status === "overdue" && "text-[#FFD02B] dark:text-[#FFD02B]",
+          status === "paid" && "text-[#00C969] dark:text-[#00C969]",
+          status === "unpaid" && "text-[#1D1D1D] dark:text-[#F5F5F3]",
+          status === "scheduled" && "text-[#1F6FEB] dark:text-[#1F6FEB]",
+          status === "refunded" && "text-[#F97316] dark:text-[#F97316]",
+          className,
+        )}
+      >
+        {t(`invoice_status.${status}`)}
+      </span>
+    );
+  }
+
   return (
     <div
       className={cn(
-        "px-2 py-0.5 rounded-full cursor-default font-mono inline-flex max-w-full text-[11px]",
+        "px-2 py-0.5 rounded-full cursor-default inline-flex max-w-full text-[11px]",
         (status === "draft" || status === "canceled") &&
           "text-[#878787] bg-[#F2F1EF] text-[10px] dark:text-[#878787] dark:bg-[#1D1D1D]",
         status === "overdue" &&
@@ -37,6 +66,8 @@ export function InvoiceStatus({
           "text-[#1D1D1D] bg-[#878787]/10 dark:text-[#F5F5F3] dark:bg-[#F5F5F3]/10",
         status === "scheduled" &&
           "text-[#1F6FEB] bg-[#DDEBFF] dark:text-[#1F6FEB] dark:bg-[#1F6FEB]/10",
+        status === "refunded" &&
+          "text-[#F97316] bg-[#FFEDD5] dark:text-[#F97316] dark:bg-[#F97316]/10",
         className,
       )}
     >

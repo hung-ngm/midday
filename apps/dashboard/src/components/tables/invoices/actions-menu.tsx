@@ -2,6 +2,7 @@
 
 import { OpenURL } from "@/components/open-url";
 import { useInvoiceParams } from "@/hooks/use-invoice-params";
+import { useUserQuery } from "@/hooks/use-user";
 import { downloadFile } from "@/lib/download";
 import { useTRPC } from "@/trpc/client";
 import { getUrl } from "@/utils/environment";
@@ -28,6 +29,7 @@ type Props = {
 
 export function ActionsMenu({ row }: Props) {
   const trpc = useTRPC();
+  const { data: user } = useUserQuery();
   const queryClient = useQueryClient();
   const { setParams } = useInvoiceParams();
   const { toast } = useToast();
@@ -54,6 +56,10 @@ export function ActionsMenu({ row }: Props) {
         });
 
         queryClient.invalidateQueries({
+          queryKey: trpc.invoice.paymentStatus.queryKey(),
+        });
+
+        queryClient.invalidateQueries({
           queryKey: trpc.invoice.defaultSettings.queryKey(),
         });
       },
@@ -70,6 +76,18 @@ export function ActionsMenu({ row }: Props) {
         // Widget uses regular query
         queryClient.invalidateQueries({
           queryKey: trpc.invoice.get.queryKey(),
+        });
+
+        queryClient.invalidateQueries({
+          queryKey: trpc.invoice.getById.queryKey(),
+        });
+
+        queryClient.invalidateQueries({
+          queryKey: trpc.invoice.invoiceSummary.queryKey(),
+        });
+
+        queryClient.invalidateQueries({
+          queryKey: trpc.invoice.paymentStatus.queryKey(),
         });
       },
     }),
@@ -115,6 +133,10 @@ export function ActionsMenu({ row }: Props) {
         queryClient.invalidateQueries({
           queryKey: trpc.invoice.invoiceSummary.queryKey(),
         });
+
+        queryClient.invalidateQueries({
+          queryKey: trpc.invoice.paymentStatus.queryKey(),
+        });
       },
     }),
   );
@@ -130,7 +152,7 @@ export function ActionsMenu({ row }: Props) {
   };
 
   return (
-    <div>
+    <div className="flex items-center justify-center w-full">
       <DropdownMenu>
         <DropdownMenuTrigger asChild className="relative">
           <Button variant="ghost" className="h-8 w-8 p-0">
@@ -163,8 +185,17 @@ export function ActionsMenu({ row }: Props) {
           {row.status !== "draft" && (
             <DropdownMenuItem
               onClick={() => {
+                if (!user?.fileKey) {
+                  console.error("File key not available");
+                  return;
+                }
+                const url = new URL(
+                  `${process.env.NEXT_PUBLIC_API_URL}/files/download/invoice`,
+                );
+                url.searchParams.set("id", row.id);
+                url.searchParams.set("fk", user.fileKey);
                 downloadFile(
-                  `/api/download/invoice?id=${row.id}`,
+                  url.toString(),
                   `${row.invoiceNumber || "invoice"}.pdf`,
                 );
               }}

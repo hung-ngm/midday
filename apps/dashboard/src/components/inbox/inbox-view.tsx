@@ -3,8 +3,10 @@
 import { LoadMore } from "@/components/load-more";
 import { useInboxFilterParams } from "@/hooks/use-inbox-filter-params";
 import { useInboxParams } from "@/hooks/use-inbox-params";
+import { useMatchSound } from "@/hooks/use-match-sound";
 import { useRealtime } from "@/hooks/use-realtime";
 import { useUserQuery } from "@/hooks/use-user";
+import { useInboxStore } from "@/store/inbox";
 import { useTRPC } from "@/trpc/client";
 import { ScrollArea } from "@midday/ui/scroll-area";
 import {
@@ -16,6 +18,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useInView } from "react-intersection-observer";
 import { useBoolean, useCounter, useDebounceCallback } from "usehooks-ts";
+import { InboxBulkActions } from "./inbox-bulk-actions";
 import { InboxDetails } from "./inbox-details";
 import { NoResults } from "./inbox-empty";
 import { InboxItem } from "./inbox-item";
@@ -28,12 +31,23 @@ export function InboxView() {
   const { data: user } = useUserQuery();
   const { params, setParams } = useInboxParams();
   const { params: filter, hasFilter } = useInboxFilterParams();
+  const {
+    lastClickedIndex,
+    selectRange,
+    setLastClickedIndex,
+    toggleSelection,
+  } = useInboxStore();
+  const { play: playMatchSound } = useMatchSound();
 
   const allSeenIdsRef = useRef(new Set<string>());
+  const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const scrollAreaViewportRef = useRef<HTMLDivElement | null>(null);
+  const shouldScrollRef = useRef(false);
 
   const infiniteQueryOptions = trpc.inbox.get.infiniteQueryOptions(
     {
       order: params.order,
+      sort: params.sort,
       ...filter,
     },
     {
@@ -67,6 +81,14 @@ export function InboxView() {
     if (payload?.new) {
       const newRecord = payload.new;
       const oldRecord = payload.old;
+
+      // Play sound when transitioning to suggested_match
+      if (
+        newRecord.status === "suggested_match" &&
+        oldRecord?.status !== "suggested_match"
+      ) {
+        playMatchSound();
+      }
 
       return (
         newRecord.status !== oldRecord?.status &&
@@ -161,6 +183,12 @@ export function InboxView() {
     }
   }, [tableData, params.inboxId, setParams]);
 
+  // Clear lastClickedIndex when sort/filter params change
+  // since item positions in tableData will change
+  useEffect(() => {
+    setLastClickedIndex(null);
+  }, [params.sort, params.order, filter.q, filter.status]);
+
   // Arrow key navigation
   useHotkeys(
     "up",
@@ -172,6 +200,7 @@ export function InboxView() {
 
       if (currentIndex > 0) {
         const prevItem = tableData[currentIndex - 1];
+        shouldScrollRef.current = true;
         setParams({
           ...params,
           inboxId: prevItem?.id,
@@ -191,6 +220,7 @@ export function InboxView() {
 
       if (currentIndex < tableData.length - 1) {
         const nextItem = tableData[currentIndex + 1];
+        shouldScrollRef.current = true;
         setParams({
           ...params,
           inboxId: nextItem?.id,
@@ -199,6 +229,62 @@ export function InboxView() {
     },
     [tableData, params, setParams],
   );
+
+  // Handle item click for selection
+  const handleItemClick = (e: React.MouseEvent, index: number) => {
+    if (e.shiftKey && lastClickedIndex !== null) {
+      // Shift-click: select range
+      selectRange(lastClickedIndex, index, tableData);
+      setLastClickedIndex(index);
+    } else {
+      // Regular click: toggle selection
+      const item = tableData[index];
+      if (item) {
+        toggleSelection(item.id);
+        setLastClickedIndex(index);
+      }
+    }
+  };
+
+  // Scroll selected inbox item to center of viewport (only on keyboard navigation)
+  useEffect(() => {
+    const inboxId = params.inboxId;
+    if (!inboxId) return;
+
+    // Only scroll if navigation was triggered by keyboard
+    if (!shouldScrollRef.current) return;
+
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      const itemElement = itemRefs.current.get(inboxId);
+      const viewport = scrollAreaViewportRef.current;
+      if (!itemElement || !viewport) {
+        shouldScrollRef.current = false;
+        return;
+      }
+
+      // Calculate position relative to viewport
+      const viewportRect = viewport.getBoundingClientRect();
+      const itemRect = itemElement.getBoundingClientRect();
+
+      // Calculate current scroll position
+      const itemTop = itemRect.top - viewportRect.top + viewport.scrollTop;
+      const itemHeight = itemRect.height;
+      const viewportHeight = viewport.clientHeight;
+
+      // Center the item in the viewport
+      const scrollPosition = itemTop - viewportHeight / 2 + itemHeight / 2;
+
+      // Scroll the viewport directly (not the window)
+      viewport.scrollTo({
+        top: Math.max(0, scrollPosition),
+        behavior: "smooth",
+      });
+
+      // Reset the flag after scrolling
+      shouldScrollRef.current = false;
+    });
+  }, [params.inboxId, tableData]);
 
   // If user is connected, and we don't have any data, we need to show a skeleton
   if (params.connected && !tableData?.length) {
@@ -213,6 +299,9 @@ export function InboxView() {
     <div className="flex flex-row space-x-8 mt-4">
       <div className="w-full h-full">
         <ScrollArea
+          ref={(node) => {
+            scrollAreaViewportRef.current = node as HTMLDivElement | null;
+          }}
           className="relative w-full h-[calc(100vh-180px)] overflow-hidden"
           hideScrollbar
         >
@@ -241,7 +330,18 @@ export function InboxView() {
                     }
                     exit="exit"
                   >
-                    <InboxItem item={item} index={index} />
+                    <InboxItem
+                      ref={(el) => {
+                        if (el) {
+                          itemRefs.current.set(item.id, el);
+                        } else {
+                          itemRefs.current.delete(item.id);
+                        }
+                      }}
+                      item={item}
+                      index={index}
+                      onItemClick={handleItemClick}
+                    />
                   </motion.div>
                 );
               })}
@@ -253,6 +353,7 @@ export function InboxView() {
       </div>
 
       <InboxDetails />
+      <InboxBulkActions />
     </div>
   );
 }

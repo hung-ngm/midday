@@ -3,7 +3,7 @@ import { verifyAccessToken } from "@api/utils/auth";
 import type { Session } from "@api/utils/auth";
 import { getGeoContext } from "@api/utils/geo";
 import type { Database } from "@midday/db/client";
-import { connectDb } from "@midday/db/client";
+import { db } from "@midday/db/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { TRPCError, initTRPC } from "@trpc/server";
 import type { Context } from "hono";
@@ -17,6 +17,7 @@ type TRPCContext = {
   db: Database;
   geo: ReturnType<typeof getGeoContext>;
   teamId?: string;
+  forcePrimary?: boolean;
 };
 
 export const createTRPCContext = async (
@@ -26,14 +27,19 @@ export const createTRPCContext = async (
   const accessToken = c.req.header("Authorization")?.split(" ")[1];
   const session = await verifyAccessToken(accessToken);
   const supabase = await createClient(accessToken);
-  const db = await connectDb();
+
+  // Use the singleton database instance - no need for caching
   const geo = getGeoContext(c.req);
+
+  // Check if client wants to force primary database reads (for replication lag handling)
+  const forcePrimary = c.req.header("x-force-primary") === "true";
 
   return {
     session,
     supabase,
     db,
     geo,
+    forcePrimary,
   };
 };
 

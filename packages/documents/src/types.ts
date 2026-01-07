@@ -2,6 +2,7 @@ export type GetDocumentRequest = {
   content?: string;
   documentUrl?: string;
   mimetype: string;
+  companyName?: string | null;
 };
 
 export type GetInvoiceOrReceiptResponse = {
@@ -15,6 +16,7 @@ export type GetInvoiceOrReceiptResponse = {
   tax_amount?: number | null;
   tax_rate?: number | null;
   tax_type?: string | null;
+  invoice_number?: string | null;
   metadata?: Record<string, string | number | boolean | null>;
 };
 

@@ -10,11 +10,9 @@ export function InvoicesOverdue() {
   const { setFilter } = useInvoiceFilterParams();
   const { data } = useSuspenseQuery(
     trpc.invoice.invoiceSummary.queryOptions({
-      status: "overdue",
+      statuses: ["overdue"],
     }),
   );
-
-  const totalInvoiceCount = data?.at(0)?.invoiceCount;
 
   return (
     <button
@@ -26,11 +24,7 @@ export function InvoicesOverdue() {
       }
       className="hidden sm:block text-left"
     >
-      <InvoiceSummary
-        data={data}
-        totalInvoiceCount={totalInvoiceCount ?? 0}
-        title="Overdue"
-      />
+      <InvoiceSummary data={data} title="Overdue" />
     </button>
   );
 }

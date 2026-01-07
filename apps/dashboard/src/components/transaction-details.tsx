@@ -1,6 +1,8 @@
 "use client";
 
+import { useInvalidateTransactionQueries } from "@/hooks/use-invalidate-transaction-queries";
 import { useTransactionParams } from "@/hooks/use-transaction-params";
+import { useUpdateTransactionCategory } from "@/hooks/use-update-transaction-category";
 import { useTRPC } from "@/trpc/client";
 import {
   Accordion,
@@ -31,6 +33,7 @@ import { Note } from "./note";
 import { SelectCategory } from "./select-category";
 import { SelectTags } from "./select-tags";
 import { SuggestedMatch } from "./suggested-match";
+import { TaxAmount } from "./tax-amount";
 import { TransactionAttachments } from "./transaction-attachments";
 import { TransactionBankAccount } from "./transaction-bank-account";
 import { TransactionShortcuts } from "./transaction-shortcuts";
@@ -38,8 +41,16 @@ import { TransactionShortcuts } from "./transaction-shortcuts";
 export function TransactionDetails() {
   const trpc = useTRPC();
   const { transactionId } = useTransactionParams();
-
   const queryClient = useQueryClient();
+  const invalidateTransactionQueries = useInvalidateTransactionQueries();
+
+  const { updateCategory } = useUpdateTransactionCategory({
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: trpc.transactions.getById.queryKey({ id: transactionId! }),
+      });
+    },
+  });
 
   const { data, isLoading, isFetching } = useQuery({
     ...trpc.transactions.getById.queryOptions({ id: transactionId! }),
@@ -58,10 +69,16 @@ export function TransactionDetails() {
 
   const updateTransactionMutation = useMutation(
     trpc.transactions.update.mutationOptions({
-      onSuccess: () => {
-        queryClient.invalidateQueries({
-          queryKey: trpc.transactions.get.infiniteQueryKey(),
-        });
+      onSuccess: (_, variables) => {
+        // If category or internal (exclude from reports) changed, invalidate reports and widgets
+        if ("categorySlug" in variables || "internal" in variables) {
+          invalidateTransactionQueries();
+        } else {
+          // Otherwise just invalidate transaction queries
+          queryClient.invalidateQueries({
+            queryKey: trpc.transactions.get.infiniteQueryKey(),
+          });
+        }
       },
       onMutate: async (variables) => {
         // Cancel any outgoing refetches
@@ -262,8 +279,8 @@ export function TransactionDetails() {
               ) : (
                 <span
                   className={cn(
-                    "text-4xl font-mono select-text",
-                    data?.category?.slug === "income" && "text-[#00C969]",
+                    "text-4xl select-text font-serif",
+                    data?.amount > 0 && "text-[#00C969]",
                   )}
                 >
                   <FormatAmount
@@ -279,6 +296,7 @@ export function TransactionDetails() {
                     <FormatAmount
                       amount={data.taxAmount}
                       currency={data.currency}
+                      maximumFractionDigits={2}
                     />
                   </span>
                 ) : null}
@@ -305,53 +323,12 @@ export function TransactionDetails() {
             // @ts-expect-error
             selected={data?.category ?? undefined}
             onChange={async (category) => {
-              if (category) {
-                updateTransactionMutation.mutate({
-                  id: data?.id,
-                  categorySlug: category.slug,
+              if (category && data?.id && data?.name) {
+                await updateCategory(data.id, data.name, {
+                  id: category.id,
+                  name: category.name,
+                  slug: category.slug,
                 });
-
-                const similarTransactions = await queryClient.fetchQuery(
-                  trpc.transactions.getSimilarTransactions.queryOptions({
-                    transactionId: data?.id,
-                    name: data.name,
-                    categorySlug: category.slug,
-                  }),
-                );
-
-                if (
-                  similarTransactions?.length &&
-                  similarTransactions.length > 1
-                ) {
-                  toast({
-                    duration: 6000,
-                    variant: "ai",
-                    title: "Midday AI",
-                    description: `We found ${similarTransactions?.length} similar transactions to "${data?.name}". Mark them as ${category.name} too?`,
-                    footer: (
-                      <div className="flex space-x-2 mt-4">
-                        <ToastAction altText="Cancel" className="pl-5 pr-5">
-                          Cancel
-                        </ToastAction>
-                        <ToastAction
-                          altText="Yes"
-                          onClick={() => {
-                            // Use bulk update with the similar transaction IDs
-                            const similarTransactionIds =
-                              similarTransactions.map((t) => t.id);
-                            updateTransactionsMutation.mutate({
-                              ids: similarTransactionIds,
-                              categorySlug: category.slug,
-                            });
-                          }}
-                          className="pl-5 pr-5 bg-primary text-primary-foreground hover:bg-primary/90"
-                        >
-                          Yes
-                        </ToastAction>
-                      </div>
-                    ),
-                  });
-                }
               }
             }}
           />
@@ -438,12 +415,12 @@ export function TransactionDetails() {
           <AccordionContent className="select-text">
             <div className="mb-4 border-b pb-4">
               <Label className="mb-2 block font-medium text-md">
-                Exclude from analytics
+                Exclude from reports
               </Label>
               <div className="flex flex-row items-center justify-between">
                 <div className="space-y-0.5 pr-4">
                   <p className="text-xs text-muted-foreground">
-                    Exclude this transaction from analytics like profit, expense
+                    Exclude this transaction from reports like profit, expense
                     and revenue. This is useful for internal transfers between
                     accounts to avoid double-counting.
                   </p>
@@ -460,6 +437,15 @@ export function TransactionDetails() {
                 />
               </div>
             </div>
+
+            <TaxAmount
+              transactionId={data?.id}
+              amount={data?.amount}
+              currency={data?.currency}
+              taxRate={data?.taxRate}
+              taxAmount={data?.taxAmount}
+              taxType={data?.taxType}
+            />
 
             <div className="flex flex-row items-center justify-between">
               <div className="space-y-0.5">

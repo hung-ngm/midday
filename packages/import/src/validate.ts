@@ -9,7 +9,7 @@ export const createTransactionSchema = z.object({
   internal_id: z.string(),
   status: z.enum(["posted", "pending"]),
   method: z.enum(["card", "bank", "other"]),
-  date: z.coerce.date(),
+  date: z.string().date(),
   amount: z.number(),
   manual: z.boolean(),
   category_slug: z.string().nullable(),

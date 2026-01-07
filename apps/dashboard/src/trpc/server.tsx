@@ -1,5 +1,6 @@
 import "server-only";
 
+import { Cookies } from "@/utils/constants";
 import type { AppRouter } from "@midday/api/trpc/routers/_app";
 import { getCountryCode, getLocale, getTimezone } from "@midday/location";
 import { createClient } from "@midday/supabase/server";
@@ -10,6 +11,7 @@ import {
   type TRPCQueryOptions,
   createTRPCOptionsProxy,
 } from "@trpc/tanstack-react-query";
+import { cookies } from "next/headers";
 import { cache } from "react";
 import superjson from "superjson";
 import { makeQueryClient } from "./query-client";
@@ -27,17 +29,26 @@ export const trpc = createTRPCOptionsProxy<AppRouter>({
         transformer: superjson,
         async headers() {
           const supabase = await createClient();
+          const cookieStore = await cookies();
 
           const {
             data: { session },
           } = await supabase.auth.getSession();
 
-          return {
+          const headers: Record<string, string> = {
             Authorization: `Bearer ${session?.access_token}`,
             "x-user-timezone": await getTimezone(),
             "x-user-locale": await getLocale(),
             "x-user-country": await getCountryCode(),
           };
+
+          // Pass force-primary cookie as header to API for replication lag handling
+          const forcePrimary = cookieStore.get(Cookies.ForcePrimary);
+          if (forcePrimary?.value === "true") {
+            headers["x-force-primary"] = "true";
+          }
+
+          return headers;
         },
       }),
       loggerLink({
@@ -83,4 +94,36 @@ export function batchPrefetch<T extends ReturnType<TRPCQueryOptions<any>>>(
       void queryClient.prefetchQuery(queryOptions);
     }
   }
+}
+
+/**
+ * Get a tRPC client for server-side API routes
+ * Use this when you need to call mutations from API routes (e.g., webhooks, callbacks)
+ * For queries, use the `trpc` proxy with `queryOptions` instead
+ */
+export async function getTRPCClient() {
+  const supabase = await createClient();
+  const cookieStore = await cookies();
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  return createTRPCClient<AppRouter>({
+    links: [
+      httpBatchLink({
+        url: `${process.env.NEXT_PUBLIC_API_URL}/trpc`,
+        transformer: superjson,
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`,
+          "x-user-timezone": await getTimezone(),
+          "x-user-locale": await getLocale(),
+          "x-user-country": await getCountryCode(),
+          ...(cookieStore.get(Cookies.ForcePrimary)?.value === "true" && {
+            "x-force-primary": "true",
+          }),
+        },
+      }),
+    ],
+  });
 }

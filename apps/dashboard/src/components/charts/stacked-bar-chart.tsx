@@ -1,9 +1,7 @@
 // @ts-nocheck
-
 "use client";
 
 import { useUserQuery } from "@/hooks/use-user";
-import { useI18n } from "@/locales/client";
 import { formatAmount } from "@/utils/format";
 import { Icons } from "@midday/ui/icons";
 import { format } from "date-fns";
@@ -17,61 +15,76 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import {
+  commonChartConfig,
+  createCompactTickFormatter,
+  useChartMargin,
+} from "./chart-utils";
+import { SelectableChartWrapper } from "./selectable-chart-wrapper";
 
-const ToolTipContent = ({ payload = [] }) => {
-  const t = useI18n();
+const ToolTipContent = ({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: any[];
+  label?: string;
+}) => {
   const { data: user } = useUserQuery();
+
+  if (!active || !payload || payload.length === 0) return null;
 
   const current = payload[0]?.payload;
 
   if (!current) return null;
 
+  // Format amounts using proper currency formatting
+  const formatCurrency = (amount: number) =>
+    formatAmount({
+      amount,
+      currency: current.currency,
+      locale: user?.locale ?? undefined,
+      maximumFractionDigits: 0,
+    }) ?? `${current.currency}${amount.toLocaleString()}`;
+
   return (
-    <div className="w-[240px] border shadow-sm bg-background">
-      <div className="border-b-[1px] px-4 py-2 flex justify-between items-center">
-        <p className="text-sm">{t(`chart_type.${current.meta.type}`)}</p>
-      </div>
-
-      <div className="p-4">
-        <div className="flex justify-between mb-2">
-          <div className="flex items-center justify-center space-x-2">
-            <div className="w-[8px] h-[8px] rounded-full bg-[#C6C6C6] dark:bg-[#606060]" />
-            <p className="font-medium text-[13px]">
-              {formatAmount({
-                maximumFractionDigits: 0,
-                minimumFractionDigits: 0,
-                currency: current.currency,
-                amount: current.total,
-                locale: user?.locale,
-              })}
-            </p>
-          </div>
-
-          <p className="text-xs text-[#606060] text-right">Total</p>
-        </div>
-
-        <div className="flex justify-between">
-          <div className="flex items-center justify-center space-x-2">
-            <Icons.DotRaster />
-            <p className="font-medium text-[13px]">
-              {formatAmount({
-                amount: current.recurring,
-                currency: current.currency,
-                maximumFractionDigits: 0,
-                minimumFractionDigits: 0,
-                locale: user?.locale,
-              })}
-            </p>
-          </div>
-
-          <p className="text-xs text-[#606060] text-right">Recurring</p>
-        </div>
-      </div>
+    <div className="border p-2 text-[10px] font-hedvig-sans bg-white dark:bg-[#0c0c0c] border-[#e6e6e6] dark:border-[#1d1d1d] text-black dark:text-white shadow-sm">
+      <p className="mb-1 text-[#707070] dark:text-[#666666]">{label}</p>
+      <p className="text-black dark:text-white">
+        Total: {formatCurrency(current.total)}
+      </p>
+      <p className="text-black dark:text-white">
+        Recurring: {formatCurrency(current.recurring)}
+      </p>
     </div>
   );
 };
 
-export function StackedBarChart({ data, height = 290 }) {
+export function StackedBarChart({
+  data,
+  height = 290,
+  enableSelection = false,
+  onSelectionChange,
+  onSelectionComplete,
+  onSelectionStateChange,
+}: {
+  data: any;
+  height?: number;
+  enableSelection?: boolean;
+  onSelectionChange?: (
+    startDate: string | null,
+    endDate: string | null,
+  ) => void;
+  onSelectionComplete?: (
+    startDate: string,
+    endDate: string,
+    chartType: string,
+  ) => void;
+  onSelectionStateChange?: (isSelecting: boolean) => void;
+}) {
+  const tickFormatter = createCompactTickFormatter();
+
   const formattedData = data.result.map((item) => ({
     ...item,
     value: item.value,
@@ -81,8 +94,11 @@ export function StackedBarChart({ data, height = 290 }) {
     date: format(new Date(item.date), "MMM"),
   }));
 
-  return (
-    <div className="relative h-full w-full">
+  // Calculate margin using the utility hook
+  const { marginLeft } = useChartMargin(formattedData, "total", tickFormatter);
+
+  const chartContent = (
+    <div className="w-full relative">
       <div className="space-x-4 absolute right-0 -top-10 hidden md:flex">
         <div className="flex space-x-2 items-center">
           <span className="w-2 h-2 rounded-full bg-[#C6C6C6] dark:bg-[#606060]" />
@@ -94,149 +110,167 @@ export function StackedBarChart({ data, height = 290 }) {
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={height}>
-        <ComposedChart data={formattedData} barGap={15}>
-          <defs>
-            <pattern
-              id="raster"
-              patternUnits="userSpaceOnUse"
-              width="64"
-              height="64"
-            >
-              <rect
+      {/* Chart */}
+      <div style={{ height }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart
+            data={formattedData}
+            barGap={15}
+            margin={{ top: 6, right: 6, left: -marginLeft, bottom: 6 }}
+          >
+            <defs>
+              <pattern
+                id="raster"
+                patternUnits="userSpaceOnUse"
                 width="64"
                 height="64"
-                className="dark:fill-[#323232] fill-[#C6C6C6]"
-              />
-              <path
-                d="M-106 110L22 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-98 110L30 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-90 110L38 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-82 110L46 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-74 110L54 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-66 110L62 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-58 110L70 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-50 110L78 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-42 110L86 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-34 110L94 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-26 110L102 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-18 110L110 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-10 110L118 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M-2 110L126 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M6 110L134 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M14 110L142 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-              <path
-                d="M22 110L150 -18"
-                className="stroke-[#323232] dark:stroke-white"
-              />
-            </pattern>
-          </defs>
+              >
+                <rect
+                  width="64"
+                  height="64"
+                  className="dark:fill-[#323232] fill-[#C6C6C6]"
+                />
+                <path
+                  d="M-106 110L22 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-98 110L30 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-90 110L38 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-82 110L46 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-74 110L54 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-66 110L62 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-58 110L70 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-50 110L78 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-42 110L86 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-34 110L94 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-26 110L102 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-18 110L110 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-10 110L118 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M-2 110L126 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M6 110L134 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M14 110L142 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+                <path
+                  d="M22 110L150 -18"
+                  className="stroke-[#323232] dark:stroke-white"
+                />
+              </pattern>
+            </defs>
 
-          <XAxis
-            dataKey="date"
-            stroke="#888888"
-            fontSize={12}
-            tickLine={false}
-            axisLine={false}
-            tickMargin={15}
-            tick={{
-              fill: "#606060",
-              fontSize: 12,
-              fontFamily: "var(--font-sans)",
-            }}
-          />
+            <XAxis
+              dataKey="date"
+              axisLine={false}
+              tickLine={false}
+              tick={{
+                fill: "var(--chart-axis-text)",
+                fontSize: 10,
+                fontFamily: commonChartConfig.fontFamily,
+              }}
+            />
 
-          <YAxis
-            stroke="#888888"
-            fontSize={12}
-            tickMargin={10}
-            tickLine={false}
-            axisLine={false}
-            tick={{
-              fill: "#606060",
-              fontSize: 12,
-              fontFamily: "var(--font-sans)",
-            }}
-          />
+            <YAxis
+              axisLine={false}
+              tickLine={false}
+              tick={{
+                fill: "var(--chart-axis-text)",
+                fontSize: 10,
+                fontFamily: commonChartConfig.fontFamily,
+              }}
+              tickFormatter={tickFormatter}
+              dataKey="total"
+            />
 
-          <CartesianGrid
-            strokeDasharray="3 3"
-            vertical={false}
-            className="stoke-[#DCDAD2] dark:stroke-[#2C2C2C]"
-          />
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="var(--chart-grid-stroke)"
+            />
 
-          <Tooltip content={ToolTipContent} cursor={false} />
+            <Tooltip content={ToolTipContent} cursor={false} />
 
-          <Bar
-            barSize={16}
-            dataKey="recurring"
-            stackId="a"
-            fill="url(#raster)"
-          />
+            <Bar
+              barSize={16}
+              dataKey="recurring"
+              stackId="a"
+              fill="url(#raster)"
+            />
 
-          <Bar
-            barSize={16}
-            dataKey="value"
-            stackId="a"
-            className="dark:fill-[#323232] fill-[#C6C6C6]"
-          />
+            <Bar
+              barSize={16}
+              dataKey="value"
+              stackId="a"
+              className="dark:fill-[#323232] fill-[#C6C6C6]"
+            />
 
-          <Line
-            type="monotone"
-            dataKey="recurring"
-            strokeWidth={2.5}
-            stroke="hsl(var(--border))"
-            dot={false}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
+            <Line
+              type="monotone"
+              dataKey="recurring"
+              strokeWidth={2.5}
+              stroke="hsl(var(--border))"
+              dot={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
     </div>
+  );
+
+  return (
+    <SelectableChartWrapper
+      data={formattedData}
+      dateKey="date"
+      enableSelection={enableSelection}
+      onSelectionChange={onSelectionChange}
+      onSelectionComplete={(startDate, endDate) => {
+        onSelectionComplete?.(startDate, endDate, "stacked-bar");
+      }}
+      onSelectionStateChange={onSelectionStateChange}
+      chartType="stacked-bar"
+    >
+      {chartContent}
+    </SelectableChartWrapper>
   );
 }

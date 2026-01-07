@@ -10,23 +10,27 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^1.3.22",
-    "@slack/bolt": "^4.4.0",
-    "@slack/web-api": "^7.9.2",
-    "ai": "^4.3.19",
-    "zod": "3.25.64",
-    "@midday/jobs": "workspace:*"
+    "@midday/jobs": "workspace:*",
+    "@slack/bolt": "^4.6.0",
+    "@slack/web-api": "^7.13.0",
+    "zod": "^4.1.13"
   },
   "devDependencies": {
-    "@types/node": "^24.0.1",
-    "typescript": "^5.9.2"
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
   },
   "exports": {
     ".": "./src/index.ts",
     "./types": "./src/types.ts",
     "./slack": "./src/slack/index.ts",
-    "./slack-notifications": "./src/slack/lib/notifications/transactions.ts",
-    "./slack-client": "./src/slack/lib/client.ts",
-    "./db": "./src/db/index.ts"
+    "./slack/server": "./src/slack/server/index.ts",
+    "./slack-notifications": "./src/slack/server/notifications/transactions.ts",
+    "./slack-client": "./src/slack/server/client.ts",
+    "./whatsapp": "./src/whatsapp/index.ts",
+    "./whatsapp/server": "./src/whatsapp/server/index.ts",
+    "./whatsapp-client": "./src/whatsapp/server/client.ts",
+    "./xero": "./src/xero/config.ts",
+    "./quickbooks": "./src/quick-books/config.ts",
+    "./fortnox": "./src/fortnox/config.ts"
   }
 }

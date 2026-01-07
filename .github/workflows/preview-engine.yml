@@ -10,11 +10,12 @@ on:
 jobs:
   deploy-preview:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: v1.2.23
       - name: Install dependencies
         run: bun install
       - name: 🔦 Run linter
@@ -32,5 +33,5 @@ jobs:
           packageManager: bun
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: "apps/engine"
-          wranglerVersion: "3.93.0"
+          wranglerVersion: "4.33.2"
           command: deploy --minify src/index.ts --env staging

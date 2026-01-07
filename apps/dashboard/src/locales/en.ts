@@ -41,6 +41,13 @@ export default {
     this_year: "This year",
     last_year: "Last year",
   },
+  widget_period: {
+    fiscal_ytd: "Fiscal YTD",
+    fiscal_year: "Fiscal Year",
+    current_quarter: "Current Quarter",
+    trailing_12: "Last 12 Months",
+    current_month: "Current Month",
+  },
   transactions_period: {
     all: "All",
     income: "Income",
@@ -164,6 +171,15 @@ export default {
       with_customer: "Invoice {invoiceNumber} created for {customerName}",
       without_customer: "Invoice {invoiceNumber} has been created",
     },
+    invoice_refunded: {
+      name: "Refunded",
+      description: "Get notified when invoice payments are refunded",
+      title: "Invoice refunded",
+      subtitle: "Invoice payment has been refunded",
+      with_customer:
+        "Invoice {invoiceNumber} for {customerName} has been refunded",
+      without_customer: "Invoice {invoiceNumber} has been refunded",
+    },
     inbox_new: {
       name: "New Inbox Items",
       description: "Get notified when new items arrive in your inbox",
@@ -249,12 +265,6 @@ export default {
     spending: "Spending",
     transactions: "Transactions",
     tracker: "Tracker",
-  },
-  bottom_bar: {
-    "transactions#one": "1 Transaction",
-    "transactions#other": "{count} Transactions",
-    multi_currency: "Multi currency",
-    description: "Includes transactions from all pages of results",
   },
   account_type: {
     depository: "Depository",
@@ -345,6 +355,7 @@ export default {
     unpaid: "Unpaid",
     canceled: "Canceled",
     scheduled: "Scheduled",
+    refunded: "Refunded",
   },
   payment_status: {
     none: "Unknown",
@@ -353,10 +364,10 @@ export default {
     bad: "Bad",
   },
   payment_status_description: {
-    none: "No payment history yet.",
-    good: "Consistently pay on time.",
-    average: "Mostly on time.",
-    bad: "Room for improvement.",
+    none: "No payment history yet",
+    good: "Consistently pay on time",
+    average: "Mostly on time",
+    bad: "Room for improvement",
   },
   "invoice_count#zero": "No invoices",
   "invoice_count#one": "1 invoice",
@@ -475,5 +486,51 @@ export default {
     // Child Categories - System
     uncategorized: "Transactions that haven't been classified yet",
     other: "Miscellaneous transactions not fitting other categories",
+  },
+  tax_summary: {
+    title: {
+      vat: "VAT Summary",
+      gst: "GST Summary",
+      sales_tax: "Sales Tax Summary",
+      default: "Tax Summary",
+    },
+    collected: {
+      vat: "VAT collected",
+      gst: "GST collected",
+      sales_tax: "Sales tax collected",
+      default: "Tax collected",
+    },
+    paid: {
+      vat: "VAT paid",
+      gst: "GST paid",
+      sales_tax: "Tax on purchases",
+      default: "Tax paid",
+    },
+    to_remit: "To Remit",
+    credit: "Credit",
+    no_activity: "No tax activity",
+    balanced: "Balanced",
+    year_to_date: "Year-to-date ({year})",
+    remit_amount: "{amount} to remit",
+    credit_amount: "{amount} credit",
+    open_assistant: "Open taxes assistant",
+  },
+  overdue_invoices: {
+    title: "Overdue Invoices",
+    all_paid: "All invoices paid on time",
+    "description#one": "{count} invoice · Oldest {days} {dayText} overdue",
+    "description#other": "{count} invoices · Oldest {days} {dayText} overdue",
+    "day#one": "day",
+    "day#other": "days",
+    view_overdue: "View overdue invoices",
+  },
+  billable_hours: {
+    title: "Billable Hours",
+    no_hours: "No billable hours tracked",
+    "description#one": "{hours} hour tracked",
+    "description#other": "{hours} hours tracked",
+    "hour#one": "hour",
+    "hour#other": "hours",
+    view_tracker: "View time tracker",
   },
 } as const;

@@ -10,3 +10,19 @@ export {
   getExtensionFromMimeType,
   ensureFileExtension,
 } from "./mime-to-extension";
+
+export {
+  taxTypes,
+  getTaxTypeLabel,
+  getDefaultTaxType,
+  getTaxTypeForCountry,
+  isVATCountry,
+  isGSTCountry,
+} from "./tax";
+
+export {
+  getDefaultFiscalYearStartMonth,
+  getFiscalYearLabel,
+  getFiscalYearDates,
+  getFiscalYearToDate,
+} from "./fiscal-year";

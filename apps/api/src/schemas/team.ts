@@ -90,6 +90,30 @@ export const updateTeamByIdSchema = z.object({
     description: "Country code for the team",
     example: "US",
   }),
+  fiscalYearStartMonth: z
+    .number()
+    .int()
+    .min(1)
+    .max(12)
+    .nullable()
+    .optional()
+    .openapi({
+      description:
+        "Month when the fiscal year starts (1-12). Null for trailing 12 months. Defaults based on country if not specified.",
+      example: 4,
+    }),
+  exportSettings: z
+    .object({
+      csvDelimiter: z.string(),
+      includeCSV: z.boolean(),
+      includeXLSX: z.boolean(),
+      sendEmail: z.boolean(),
+      accountantEmail: z.string().optional(),
+    })
+    .optional()
+    .openapi({
+      description: "Export settings for transactions",
+    }),
 });
 
 export const createTeamSchema = z.object({
@@ -106,6 +130,18 @@ export const createTeamSchema = z.object({
     description: "Country code for the team",
     example: "US",
   }),
+  fiscalYearStartMonth: z
+    .number()
+    .int()
+    .min(1)
+    .max(12)
+    .nullable()
+    .optional()
+    .openapi({
+      description:
+        "Month when the fiscal year starts (1-12). Null for trailing 12 months. Will default based on country if not specified.",
+      example: 4,
+    }),
   logoUrl: z.string().url().optional().openapi({
     description: "URL to the team's logo image",
     example: "https://cdn.midday.ai/logos/acme-corp.png",

@@ -80,8 +80,13 @@ export async function getDocuments(db: Database, params: GetDocumentsParams) {
     // Using the ftsEnglish field for text search with websearch format
     const searchQuery = buildSearchQuery(q);
 
+    // Search both full-text search fields and file name using trigram similarity
     whereConditions.push(
-      sql`${documents.ftsEnglish} @@ to_tsquery('english', ${searchQuery})`,
+      sql`(
+        ${documents.ftsEnglish} @@ to_tsquery('english', ${searchQuery}) OR
+        ${documents.name} ILIKE ${`%${q}%`} OR
+        similarity(${documents.name}, ${q}) > 0.3
+      )`,
     );
   }
 
@@ -162,6 +167,60 @@ export type GetRelatedDocumentsParams = {
   teamId: string;
 };
 
+export type GetRecentDocumentsParams = {
+  teamId: string;
+  limit?: number;
+};
+
+export async function getRecentDocuments(
+  db: Database,
+  params: GetRecentDocumentsParams,
+) {
+  const { teamId, limit = 5 } = params;
+
+  const data = await db.query.documents.findMany({
+    where: and(
+      eq(documents.teamId, teamId),
+      not(like(documents.name, "%.folderPlaceholder")),
+    ),
+    columns: {
+      id: true,
+      name: true,
+      title: true,
+      createdAt: true,
+      processingStatus: true,
+      tag: true,
+    },
+    with: {
+      documentTagAssignments: {
+        with: {
+          documentTag: {
+            columns: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
+        },
+      },
+      user: {
+        columns: {
+          id: true,
+          fullName: true,
+          avatarUrl: true,
+        },
+      },
+    },
+    limit,
+    orderBy: desc(documents.createdAt),
+  });
+
+  return {
+    data,
+    total: data.length,
+  };
+}
+
 export type GetRelatedDocumentsResponse = {
   id: string;
   name: string;
@@ -198,6 +257,56 @@ export type DeleteDocumentParams = {
   id: string;
   teamId: string;
 };
+
+export type CheckDocumentAttachmentsParams = {
+  id: string;
+  teamId: string;
+};
+
+export async function checkDocumentAttachments(
+  db: Database,
+  params: CheckDocumentAttachmentsParams,
+) {
+  // First get the document to retrieve its path_tokens
+  const document = await db
+    .select({
+      id: documents.id,
+      pathTokens: documents.pathTokens,
+      name: documents.name,
+    })
+    .from(documents)
+    .where(
+      and(eq(documents.id, params.id), eq(documents.teamId, params.teamId)),
+    )
+    .limit(1);
+
+  if (!document[0] || !document[0].pathTokens) {
+    return { hasAttachments: false, attachments: [] };
+  }
+
+  // Check if there are any transaction attachments with the same path
+  const pathArray = `{${document[0].pathTokens?.map((token) => `"${token}"`).join(",")}}`;
+
+  const attachments = await db
+    .select({
+      id: transactionAttachments.id,
+      transactionId: transactionAttachments.transactionId,
+      name: transactionAttachments.name,
+    })
+    .from(transactionAttachments)
+    .where(
+      and(
+        eq(transactionAttachments.teamId, params.teamId),
+        sql`${transactionAttachments.path} @> ${pathArray}::text[] AND ${transactionAttachments.path} <@ ${pathArray}::text[]`,
+      ),
+    );
+
+  return {
+    hasAttachments: attachments.length > 0,
+    attachments,
+    documentName: document[0].name,
+  };
+}
 
 export async function deleteDocument(
   db: Database,

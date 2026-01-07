@@ -4,6 +4,7 @@ import {
   getTeamById,
   getTeamMembers,
   shouldSendNotification,
+  updateActivityMetadata,
 } from "@midday/db/queries";
 import type {
   EmailInput,
@@ -23,6 +24,7 @@ import { invoiceCancelled } from "./types/invoice-cancelled";
 import { invoiceCreated } from "./types/invoice-created";
 import { invoiceOverdue } from "./types/invoice-overdue";
 import { invoicePaid } from "./types/invoice-paid";
+import { invoiceRefunded } from "./types/invoice-refunded";
 import { invoiceReminderSent } from "./types/invoice-reminder-sent";
 import { invoiceScheduled } from "./types/invoice-scheduled";
 import { invoiceSent } from "./types/invoice-sent";
@@ -49,12 +51,15 @@ const handlers = {
   invoice_reminder_sent: invoiceReminderSent,
   invoice_cancelled: invoiceCancelled,
   invoice_created: invoiceCreated,
+  invoice_refunded: invoiceRefunded,
 } as const;
 
 export class Notifications {
   #emailService: EmailService;
+  #db: Database;
 
-  constructor(private db: Database) {
+  constructor(db: Database) {
+    this.#db = db;
     this.#emailService = new EmailService(db);
   }
 
@@ -92,9 +97,50 @@ export class Notifications {
       validatedData.users.map(async (user: UserData) => {
         const activityInput = handler.createActivity(validatedData, user);
 
+        // Check if handler supports combining
+        if (handler.combine) {
+          try {
+            const existingActivity = await handler.combine.findExisting(
+              this.#db,
+              validatedData,
+              user,
+            );
+
+            if (existingActivity) {
+              // Security check: Verify the activity belongs to the correct team
+              // This prevents combining activities across teams even if findExisting is buggy
+              if (existingActivity.teamId !== user.team_id) {
+                // Activity belongs to different team - skip combining and create new one
+                // This is a safety fallback
+              } else {
+                // Merge metadata using handler's merge function
+                const mergedMetadata = handler.combine.mergeMetadata(
+                  existingActivity.metadata as Record<string, any>,
+                  activityInput.metadata as Record<string, any>,
+                );
+
+                const updated = await updateActivityMetadata(this.#db, {
+                  activityId: existingActivity.id,
+                  teamId: user.team_id,
+                  metadata: mergedMetadata,
+                });
+
+                // If update succeeded, return the updated activity
+                // If update failed (e.g., activity was deleted or teamId mismatch), fall through to create new one
+                if (updated) {
+                  return updated;
+                }
+              }
+            }
+          } catch (error) {
+            // If combining fails, fall through to create new activity
+            // Error is silently handled - creating a new activity is the safe fallback
+          }
+        }
+
         // Check if user wants in-app notifications for this type
         const inAppEnabled = await shouldSendNotification(
-          this.db,
+          this.#db,
           user.id,
           user.team_id,
           notificationType,
@@ -121,7 +167,7 @@ export class Notifications {
         const validatedActivity = createActivitySchema.parse(activityInput);
 
         // Create activity directly using DB query
-        return createActivity(this.db, validatedActivity);
+        return createActivity(this.#db, validatedActivity);
       }),
     );
 
@@ -160,8 +206,8 @@ export class Notifications {
     options?: NotificationOptions,
   ): Promise<NotificationResult> {
     const [teamMembers, teamInfo] = await Promise.all([
-      getTeamMembers(this.db, teamId),
-      getTeamById(this.db, teamId),
+      getTeamMembers(this.#db, teamId),
+      getTeamById(this.#db, teamId),
     ]);
 
     if (!teamInfo) {
@@ -360,6 +406,7 @@ export {
   invoiceReminderSentSchema,
   invoiceCancelledSchema,
   invoiceCreatedSchema,
+  invoiceRefundedSchema,
 } from "./schemas";
 export type { NotificationTypes } from "./schemas";
 

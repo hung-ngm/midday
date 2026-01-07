@@ -1,7 +1,5 @@
 "use client";
 
-import { CreateSubCategoryModal } from "@/components/modals/create-sub-category-modal";
-import { EditCategoryModal } from "@/components/modals/edit-category-modal";
 import { useI18n } from "@/locales/client";
 import type { RouterOutputs } from "@api/trpc/routers/_app";
 import { Button } from "@midday/ui/button";
@@ -22,9 +20,32 @@ import { getTaxTypeLabel } from "@midday/utils/tax";
 import { DotsHorizontalIcon } from "@radix-ui/react-icons";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import * as React from "react";
+import type { Dispatch, SetStateAction } from "react";
+
+export interface CategoriesTableMeta {
+  deleteCategory: (id: string) => void;
+  onEdit: (id: string) => void;
+  expandedCategories: Set<string>;
+  setExpandedCategories: Dispatch<SetStateAction<Set<string>>>;
+  searchValue?: string;
+  setSearchValue?: Dispatch<SetStateAction<string>>;
+}
 
 export type Category = RouterOutputs["transactionCategories"]["get"][number];
+
+// Check if a category should show a tooltip
+function shouldShowCategoryTooltip(category: any): boolean {
+  // Show tooltip if category has a user-defined description
+  if (category.description) {
+    return true;
+  }
+  // Show tooltip for system categories (they have localized descriptions)
+  if (category.system) {
+    return true;
+  }
+  // Don't show tooltip for user-created categories without descriptions
+  return false;
+}
 
 // Component to display category description from localization
 function CategoryTooltip({ category }: { category: any }) {
@@ -35,16 +56,20 @@ function CategoryTooltip({ category }: { category: any }) {
     return <span>{category.description}</span>;
   }
 
-  // Priority 2: System description from localization
-  try {
-    return (
-      // @ts-expect-error - slug is not nullable
-      <span>{t(`transaction_categories.${category.slug}`)}</span>
-    );
-  } catch {
-    // Fallback if translation not found
-    return <span>Category description not available</span>;
+  // Priority 2: System description from localization (only for system categories)
+  if (category.system) {
+    try {
+      return (
+        // @ts-expect-error - slug is not nullable
+        <span>{t(`transaction_categories.${category.slug}`)}</span>
+      );
+    } catch {
+      // Fallback if translation not found
+      return <span>Category description not available</span>;
+    }
   }
+
+  return null;
 }
 
 // Flatten categories to include both parents and children with hierarchy info
@@ -80,22 +105,18 @@ export const columns: ColumnDef<any>[] = [
     header: "Name",
     accessorKey: "name",
     cell: ({ row, table }) => {
-      const [expandedCategories, setExpandedCategories] = React.useState<
-        Set<string>
-      >(new Set());
-
-      // Get expanded state from table meta or use local state as fallback
-      const tableExpandedCategories =
-        (table.options.meta as any)?.expandedCategories || expandedCategories;
-      const setTableExpandedCategories =
-        (table.options.meta as any)?.setExpandedCategories ||
-        setExpandedCategories;
+      // Get expanded state from table meta
+      const meta = table.options.meta as CategoriesTableMeta;
+      const tableExpandedCategories = meta?.expandedCategories || new Set();
+      const setTableExpandedCategories = meta?.setExpandedCategories;
 
       const isExpanded = tableExpandedCategories.has(row.original.id);
       const hasChildren = row.original.hasChildren;
       const isChild = row.original.isChild;
 
       const toggleExpanded = () => {
+        if (!setTableExpandedCategories) return;
+
         const newExpanded = new Set(tableExpandedCategories);
         if (isExpanded) {
           newExpanded.delete(row.original.id);
@@ -112,7 +133,10 @@ export const columns: ColumnDef<any>[] = [
               variant="ghost"
               size="sm"
               className="h-4 w-4 p-0 hover:bg-transparent"
-              onClick={toggleExpanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleExpanded();
+              }}
             >
               {isExpanded ? (
                 <ChevronDown className="h-3 w-3" />
@@ -126,29 +150,54 @@ export const columns: ColumnDef<any>[] = [
             className="size-3"
             style={{ backgroundColor: row.original.color ?? undefined }}
           />
-          <TooltipProvider delayDuration={0}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  className={cn(
-                    hasChildren && !isChild
-                      ? "cursor-pointer"
-                      : "cursor-default",
-                  )}
-                  onClick={hasChildren && !isChild ? toggleExpanded : undefined}
+          {shouldShowCategoryTooltip(row.original) ? (
+            <TooltipProvider delayDuration={0}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className={cn(
+                      hasChildren && !isChild
+                        ? "cursor-pointer"
+                        : "cursor-default",
+                    )}
+                    onClick={
+                      hasChildren && !isChild
+                        ? (e) => {
+                            e.stopPropagation();
+                            toggleExpanded();
+                          }
+                        : undefined
+                    }
+                  >
+                    {row.getValue("name")}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent
+                  className="px-3 py-1.5 text-xs"
+                  side="right"
+                  sideOffset={10}
                 >
-                  {row.getValue("name")}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent
-                className="px-3 py-1.5 text-xs"
-                side="right"
-                sideOffset={10}
-              >
-                <CategoryTooltip category={row.original} />
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+                  <CategoryTooltip category={row.original} />
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : (
+            <span
+              className={cn(
+                hasChildren && !isChild ? "cursor-pointer" : "cursor-default",
+              )}
+              onClick={
+                hasChildren && !isChild
+                  ? (e) => {
+                      e.stopPropagation();
+                      toggleExpanded();
+                    }
+                  : undefined
+              }
+            >
+              {row.getValue("name")}
+            </span>
+          )}
 
           {row.original.system && (
             <div className="pl-2">
@@ -181,60 +230,37 @@ export const columns: ColumnDef<any>[] = [
   {
     id: "actions",
     cell: ({ row, table }) => {
-      const [isEditOpen, setIsEditOpen] = React.useState(false);
-      const [isCreateSubcategoryOpen, setIsCreateSubcategoryOpen] =
-        React.useState(false);
+      const meta = table.options.meta as CategoriesTableMeta;
 
       return (
         <div className="text-right">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
+              <Button
+                variant="ghost"
+                className="h-8 w-8 p-0"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <DotsHorizontalIcon className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setIsEditOpen(true)}>
+            <DropdownMenuContent
+              align="end"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DropdownMenuItem onClick={() => meta?.onEdit?.(row.original.id)}>
                 Edit
               </DropdownMenuItem>
 
-              {!row.original.isChild && (
-                <DropdownMenuItem
-                  onClick={() => setIsCreateSubcategoryOpen(true)}
-                >
-                  Add Subcategory
-                </DropdownMenuItem>
-              )}
-
               {!row.original.system && (
                 <DropdownMenuItem
-                  onClick={() =>
-                    table.options.meta?.deleteCategory?.(row.original.id)
-                  }
+                  onClick={() => meta?.deleteCategory?.(row.original.id)}
                 >
                   Remove
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-
-          <EditCategoryModal
-            id={row.original.id}
-            defaultValue={row.original}
-            isOpen={isEditOpen}
-            onOpenChange={setIsEditOpen}
-          />
-
-          <CreateSubCategoryModal
-            isOpen={isCreateSubcategoryOpen}
-            onOpenChange={setIsCreateSubcategoryOpen}
-            parentId={row.original.id}
-            defaultTaxRate={row.original.taxRate}
-            defaultTaxType={row.original.taxType}
-            defaultColor={row.original.color}
-            defaultTaxReportingCode={row.original.taxReportingCode}
-            defaultExcluded={row.original.excluded}
-          />
         </div>
       );
     },

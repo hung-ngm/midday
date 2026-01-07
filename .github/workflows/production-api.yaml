@@ -12,14 +12,15 @@ on:
       - "!packages/ui/**"
 jobs:
   deploy:
-    name: 🚀 Deploy to Fly Production
+    name: 🚀 Deploy to Fly API Production
     runs-on: ubuntu-latest
-    concurrency: fly-production
+    timeout-minutes: 30
+    concurrency: fly-api-production
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: v1.2.23
       - name: Install dependencies
         run: bun install
       - name: 🏗 Build @midday/engine

@@ -1,24 +1,14 @@
 import { AppleSignIn } from "@/components/apple-sign-in";
-import { ConsentBanner } from "@/components/consent-banner";
 import { GithubSignIn } from "@/components/github-sign-in";
 import { GoogleSignIn } from "@/components/google-sign-in";
+import { LoginAccordion } from "@/components/login-accordion";
+import { LoginVideoBackground } from "@/components/login-video-background";
 import { OTPSignIn } from "@/components/otp-sign-in";
 import { Cookies } from "@/utils/constants";
-import { isEU } from "@midday/location";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@midday/ui/accordion";
-import { Icons } from "@midday/ui/icons";
 import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
-import Image from "next/image";
 import Link from "next/link";
 import { userAgent } from "next/server";
-import backgroundDark from "public/assets/bg-login-dark.jpg";
-import backgroundLight from "public/assets/bg-login.jpg";
 
 export const metadata: Metadata = {
   title: "Login | Midday",
@@ -27,24 +17,24 @@ export const metadata: Metadata = {
 export default async function Page() {
   const cookieStore = await cookies();
   const preferred = cookieStore.get(Cookies.PreferredSignInProvider);
-  const showTrackingConsent =
-    (await isEU()) && !cookieStore.has(Cookies.TrackingConsent);
   const { device } = userAgent({ headers: await headers() });
 
   let moreSignInOptions = null;
   let preferredSignInOption =
     device?.vendor === "Apple" ? (
-      <div className="flex flex-col space-y-2">
-        <GoogleSignIn />
-        <AppleSignIn />
+      <div className="flex flex-col space-y-3 w-full">
+        <GoogleSignIn showLastUsed={preferred?.value === "google"} />
+        <AppleSignIn showLastUsed={preferred?.value === "apple"} />
       </div>
     ) : (
-      <GoogleSignIn />
+      <GoogleSignIn
+        showLastUsed={!preferred?.value || preferred?.value === "google"}
+      />
     );
 
   switch (preferred?.value) {
     case "apple":
-      preferredSignInOption = <AppleSignIn />;
+      preferredSignInOption = <AppleSignIn showLastUsed={true} />;
       moreSignInOptions = (
         <>
           <GoogleSignIn />
@@ -55,7 +45,7 @@ export default async function Page() {
       break;
 
     case "github":
-      preferredSignInOption = <GithubSignIn />;
+      preferredSignInOption = <GithubSignIn showLastUsed={true} />;
       moreSignInOptions = (
         <>
           <GoogleSignIn />
@@ -66,7 +56,7 @@ export default async function Page() {
       break;
 
     case "google":
-      preferredSignInOption = <GoogleSignIn />;
+      preferredSignInOption = <GoogleSignIn showLastUsed={true} />;
       moreSignInOptions = (
         <>
           <AppleSignIn />
@@ -107,89 +97,64 @@ export default async function Page() {
   }
 
   return (
-    <div className="h-screen p-2">
-      {/* Header - Logo */}
-      <header className="absolute top-0 left-0 z-30 w-full">
-        <div className="p-6 md:p-8">
-          <Icons.LogoSmall className="h-8 w-auto" />
-        </div>
-      </header>
+    <div className="min-h-screen bg-background flex">
+      {/* Left Side - Video Background */}
+      <LoginVideoBackground />
 
-      {/* Main Layout */}
-      <div className="flex h-full">
-        {/* Background Image Section - Hidden on mobile, visible on desktop */}
-        <div className="hidden lg:flex lg:w-1/2 relative">
-          <Image
-            src={backgroundLight}
-            alt="Background"
-            className="object-cover dark:hidden"
-            priority
-            fill
-          />
-          <Image
-            src={backgroundDark}
-            alt="Background"
-            className="object-cover hidden dark:block"
-            priority
-            fill
-          />
-        </div>
+      {/* Right Side - Login Form */}
+      <div className="w-full lg:w-1/2 flex flex-col justify-center items-center p-8 lg:p-12 pb-2">
+        <div className="w-full max-w-md flex flex-col h-full">
+          <div className="space-y-8 flex-1 flex flex-col justify-center">
+            {/* Header */}
+            <div className="text-center space-y-2">
+              <h1 className="text-lg mb-4 font-serif">Welcome to Midday</h1>
+              <p className="font-sans text-sm text-[#878787]">
+                Sign in or create an account
+              </p>
+            </div>
 
-        {/* Login Form Section */}
-        <div className="w-full lg:w-1/2 relative">
-          {/* Form Content */}
-          <div className="relative z-10 flex h-full items-center justify-center p-6">
-            <div className="w-full max-w-md space-y-8">
-              {/* Welcome Section */}
-              <div className="text-center">
-                <h1 className="text-lg mb-4 font-serif">Welcome to Midday</h1>
-                <p className="text-[#878787] text-sm mb-8">
-                  New here or coming back? Choose how you want to continue
-                </p>
+            {/* Sign In Options */}
+            <div className="space-y-3 flex items-center justify-center w-full">
+              {preferredSignInOption}
+            </div>
+
+            {/* Divider */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
               </div>
-
-              {/* Sign In Options */}
-              <div className="space-y-4">
-                {/* Primary Sign In Option */}
-                <div className="space-y-3">{preferredSignInOption}</div>
-
-                <div className="flex items-center justify-center">
-                  <span className="text-[#878787] text-sm">Or</span>
-                </div>
-
-                {/* More Options Accordion */}
-                <Accordion type="single" collapsible className="w-full">
-                  <AccordionItem value="item-1" className="border-0">
-                    <AccordionTrigger className="flex justify-center items-center text-sm py-2 hover:no-underline">
-                      <span>Other options</span>
-                    </AccordionTrigger>
-                    <AccordionContent className="pt-4">
-                      <div className="space-y-3">{moreSignInOptions}</div>
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
-              </div>
-
-              {/* Terms and Privacy */}
-              <div className="text-center absolute bottom-4 left-0 right-0">
-                <p className="text-xs text-[#878787] leading-relaxed font-mono">
-                  By signing in you agree to our{" "}
-                  <Link href="https://midday.ai/terms" className="underline">
-                    Terms of service
-                  </Link>{" "}
-                  &{" "}
-                  <Link href="https://midday.ai/policy" className="underline">
-                    Privacy policy
-                  </Link>
-                </p>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-background font-sans text-[#878787]">
+                  or
+                </span>
               </div>
             </div>
+
+            {/* More Options Accordion */}
+            <LoginAccordion>{moreSignInOptions}</LoginAccordion>
+          </div>
+
+          {/* Terms and Privacy Policy - Bottom aligned */}
+          <div className="text-center mt-auto">
+            <p className="font-sans text-xs text-[#878787]">
+              By signing in you agree to our{" "}
+              <Link
+                href="https://midday.ai/terms"
+                className="text-[#878787] hover:text-foreground transition-colors underline"
+              >
+                Terms of service
+              </Link>{" "}
+              &{" "}
+              <Link
+                href="https://midday.ai/policy"
+                className="text-[#878787] hover:text-foreground transition-colors underline"
+              >
+                Privacy policy
+              </Link>
+            </p>
           </div>
         </div>
       </div>
-
-      {/* Consent Banner */}
-      {showTrackingConsent && <ConsentBanner />}
     </div>
   );
 }

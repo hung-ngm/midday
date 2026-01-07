@@ -15,7 +15,6 @@ type Props = {
 
 export function TransactionListItem({ transaction, disabled }: Props) {
   const { setParams } = useTransactionParams();
-  const fullfilled = transaction.isFulfilled;
 
   return (
     <>
@@ -29,7 +28,7 @@ export function TransactionListItem({ transaction, disabled }: Props) {
               className={cn(
                 "text-sm line-clamp-1",
                 disabled && "skeleton-box animate-none",
-                transaction?.category?.slug === "income" && "text-[#00C969]",
+                transaction.amount > 0 && "text-[#00C969]",
               )}
             >
               {transaction.name}
@@ -40,7 +39,7 @@ export function TransactionListItem({ transaction, disabled }: Props) {
               className={cn(
                 "text-sm line-clamp-1",
                 disabled && "skeleton-box animate-none",
-                transaction?.category?.slug === "income" && "text-[#00C969]",
+                transaction.amount > 0 && "text-[#00C969]",
               )}
             >
               <FormatAmount
@@ -51,7 +50,15 @@ export function TransactionListItem({ transaction, disabled }: Props) {
           </div>
 
           <div className="ml-auto">
-            <TransactionStatus fullfilled={fullfilled} />
+            <TransactionStatus
+              isFulfilled={transaction.isFulfilled ?? false}
+              isExported={transaction.isExported ?? false}
+              hasExportError={transaction.hasExportError}
+              exportErrorCode={transaction.exportErrorCode}
+              exportProvider={transaction.exportProvider}
+              exportedAt={transaction.exportedAt}
+              hasPendingSuggestion={transaction.hasPendingSuggestion}
+            />
           </div>
         </div>
       </div>

@@ -1,12 +1,14 @@
 "use client";
 
+import { useFileUrl } from "@/hooks/use-file-url";
 import { downloadFile } from "@/lib/download";
 import { useTRPC } from "@/trpc/client";
 import { Button } from "@midday/ui/button";
 import { Icons } from "@midday/ui/icons";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { useCopyToClipboard } from "usehooks-ts";
+import { DeleteVaultFileDialog } from "./delete-vault-file-dialog";
 
 type Props = {
   id: string;
@@ -17,11 +19,15 @@ type Props = {
 export function VaultItemActions({ id, filePath, hideDelete }: Props) {
   const [, copy] = useCopyToClipboard();
   const [isCopied, setIsCopied] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const trpc = useTRPC();
-  const queryClient = useQueryClient();
 
-  const downloadUrl = `/api/download/file?path=${filePath.join("/")}`;
   const fileName = filePath.at(-1);
+  const { url: downloadUrl } = useFileUrl({
+    type: "download",
+    filePath: filePath.join("/"),
+    filename: fileName,
+  });
 
   const shortLinkMutation = useMutation(
     trpc.shortLinks.createForDocument.mutationOptions({
@@ -40,20 +46,6 @@ export function VaultItemActions({ id, filePath, hideDelete }: Props) {
     }),
   );
 
-  const deleteDocumentMutation = useMutation(
-    trpc.documents.delete.mutationOptions({
-      onSuccess: () => {
-        queryClient.invalidateQueries({
-          queryKey: trpc.documents.get.infiniteQueryKey(),
-        });
-
-        queryClient.invalidateQueries({
-          queryKey: trpc.search.global.queryKey(),
-        });
-      },
-    }),
-  );
-
   return (
     <div className="flex flex-row gap-2">
       <Button
@@ -61,11 +53,11 @@ export function VaultItemActions({ id, filePath, hideDelete }: Props) {
         size="icon"
         className="rounded-full size-7 bg-background"
         onClick={() => {
-          downloadFile(
-            `${downloadUrl}&filename=${fileName}`,
-            fileName || "download",
-          );
+          if (downloadUrl && fileName) {
+            downloadFile(downloadUrl, fileName);
+          }
         }}
+        disabled={!downloadUrl}
       >
         <Icons.ArrowCoolDown className="size-3.5" />
       </Button>
@@ -94,11 +86,18 @@ export function VaultItemActions({ id, filePath, hideDelete }: Props) {
           variant="outline"
           size="icon"
           className="rounded-full size-7 bg-background"
-          onClick={() => deleteDocumentMutation.mutate({ id })}
+          onClick={() => setShowDeleteDialog(true)}
         >
           <Icons.Delete className="size-3.5" />
         </Button>
       )}
+
+      <DeleteVaultFileDialog
+        id={id}
+        filePath={filePath}
+        isOpen={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+      />
     </div>
   );
 }

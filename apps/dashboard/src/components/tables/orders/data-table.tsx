@@ -1,10 +1,10 @@
 "use client";
 
 import { useTRPC } from "@/trpc/client";
-import { formatDate } from "@/utils/format";
 import { Button } from "@midday/ui/button";
 import { Spinner } from "@midday/ui/spinner";
 import { Table, TableBody, TableCell, TableRow } from "@midday/ui/table";
+import { formatDate } from "@midday/utils/format";
 import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { FormatAmount } from "../../format-amount";
@@ -53,10 +53,16 @@ export function OrdersDataTable() {
                   )}
                 </TableCell>
                 <TableCell className="w-[100px] font-medium">
-                  <FormatAmount
-                    amount={order.amount.amount / 100}
-                    currency={order.amount.currency}
-                  />
+                  <span
+                    className={
+                      order.status === "refunded" ? "line-through" : ""
+                    }
+                  >
+                    <FormatAmount
+                      amount={order.amount.amount / 100}
+                      currency={order.amount.currency}
+                    />
+                  </span>
                 </TableCell>
                 <TableCell className="w-[120px]">
                   <OrderStatus status={order.status} />

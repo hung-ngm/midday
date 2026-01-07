@@ -14,7 +14,9 @@ export const getTransactionsSchema = z.object({
       },
     }),
   sort: z
-    .array(z.string(), z.string())
+    .array(z.string().min(1))
+    .max(2)
+    .min(2)
     .nullable()
     .optional()
     .openapi({
@@ -188,6 +190,42 @@ export const getTransactionsSchema = z.object({
       description:
         "Transaction type to filter by. 'income' for money received, 'expense' for money spent",
       example: "expense",
+      param: {
+        in: "query",
+      },
+    }),
+  manual: z
+    .enum(["include", "exclude"])
+    .nullable()
+    .optional()
+    .openapi({
+      description:
+        "Filter transactions based on whether they were manually imported. 'include' returns only manual transactions, 'exclude' returns only non-manual transactions",
+      example: "include",
+      param: {
+        in: "query",
+      },
+    }),
+  exported: z
+    .boolean()
+    .nullable()
+    .optional()
+    .openapi({
+      description:
+        "Filter by export status. true = only exported transactions, false = only NOT exported transactions, undefined = no filter",
+      example: false,
+      param: {
+        in: "query",
+      },
+    }),
+  fulfilled: z
+    .boolean()
+    .nullable()
+    .optional()
+    .openapi({
+      description:
+        "Filter by fulfillment status. true = transactions ready for review (has attachments OR status=completed), false = not ready, undefined = no filter",
+      example: true,
       param: {
         in: "query",
       },
@@ -512,11 +550,33 @@ export const updateTransactionSchema = z.object({
         name: "id",
       },
     }),
+  name: z.string().optional().openapi({
+    description: "Name/description of the transaction.",
+  }),
+  amount: z.number().optional().openapi({
+    description: "Amount of the transaction.",
+  }),
+  currency: z.string().optional().openapi({
+    description: "Currency of the transaction.",
+  }),
+  date: z.string().optional().openapi({
+    description: "Date of the transaction (ISO 8601).",
+  }),
+  bankAccountId: z.string().optional().openapi({
+    description: "Bank account ID associated with the transaction.",
+  }),
   categorySlug: z.string().nullable().optional().openapi({
     description: "Category slug for the transaction.",
   }),
   status: z
-    .enum(["pending", "archived", "completed", "posted", "excluded"])
+    .enum([
+      "pending",
+      "archived",
+      "completed",
+      "posted",
+      "excluded",
+      "exported",
+    ])
     .nullable()
     .optional()
     .openapi({
@@ -541,6 +601,14 @@ export const updateTransactionSchema = z.object({
   assignedId: z.string().nullable().optional().openapi({
     description: "Assigned user ID for the transaction.",
   }),
+  taxRate: z.number().nullable().optional().openapi({
+    description:
+      "Tax rate as a percentage (e.g., 25 for 25% VAT). Only set when tax is calculated from a percentage.",
+  }),
+  taxAmount: z.number().nullable().optional().openapi({
+    description:
+      "Tax amount in the transaction currency. Always set when tax is present.",
+  }),
 });
 
 export const updateTransactionsSchema = z.object({
@@ -551,7 +619,14 @@ export const updateTransactionsSchema = z.object({
     description: "Category slug for the transactions.",
   }),
   status: z
-    .enum(["pending", "archived", "completed", "posted", "excluded"])
+    .enum([
+      "pending",
+      "archived",
+      "completed",
+      "posted",
+      "excluded",
+      "exported",
+    ])
     .nullable()
     .optional()
     .openapi({
@@ -732,6 +807,113 @@ export const createTransactionsSchema = z
     description: "List of transactions to create.",
   });
 
+export const getTransactionAttachmentPreSignedUrlSchema = z.object({
+  transactionId: z
+    .string()
+    .uuid()
+    .openapi({
+      description: "Unique identifier of the transaction",
+      example: "b3b7c1e2-4c2a-4e7a-9c1a-2b7c1e24c2a4",
+      param: {
+        in: "path",
+        name: "transactionId",
+      },
+    }),
+  attachmentId: z
+    .string()
+    .uuid()
+    .openapi({
+      description:
+        "Unique identifier of the attachment to generate a pre-signed URL for",
+      example: "a43dc3a5-6925-4d91-ac9c-4c1a34bdb388",
+      param: {
+        in: "path",
+        name: "attachmentId",
+      },
+    }),
+  download: z.coerce
+    .boolean()
+    .optional()
+    .openapi({
+      description:
+        "Whether to force download the file. If true, the file will be downloaded. If false or omitted, the file will be displayed in the browser if possible.",
+      example: true,
+      param: {
+        in: "query",
+        name: "download",
+      },
+    }),
+});
+
+export const transactionAttachmentPreSignedUrlResponseSchema = z.object({
+  url: z.string().url().openapi({
+    description:
+      "Pre-signed URL for accessing the attachment, valid for 60 seconds",
+    example:
+      "https://service.midday.ai/storage/v1/object/sign/vault/transactions/receipt.pdf?token=abc123&expires=1640995200",
+  }),
+  expiresAt: z.string().datetime().openapi({
+    description: "ISO 8601 timestamp when the URL expires",
+    example: "2024-04-15T10:01:00.000Z",
+  }),
+  fileName: z.string().nullable().openapi({
+    description: "Original filename of the attachment",
+    example: "receipt.pdf",
+  }),
+});
+
 export const createTransactionsResponseSchema = z.array(
   transactionResponseSchema,
 );
+
+export const exportTransactionsSchema = z.object({
+  transactionIds: z.array(z.string().uuid()).min(1),
+  dateFormat: z.string().optional(),
+  locale: z.string().optional().default("en"),
+  exportSettings: z
+    .object({
+      csvDelimiter: z.string(),
+      includeCSV: z.boolean(),
+      includeXLSX: z.boolean(),
+      sendEmail: z.boolean(),
+      accountantEmail: z.string().optional(),
+    })
+    .refine(
+      (data) => {
+        // Only validate email if sendEmail is true
+        if (data.sendEmail) {
+          if (!data.accountantEmail || data.accountantEmail.trim() === "") {
+            return false;
+          }
+          return z.string().email().safeParse(data.accountantEmail.trim())
+            .success;
+        }
+        return true;
+      },
+      {
+        message: "Invalid email address",
+        path: ["accountantEmail"],
+      },
+    )
+    .optional(),
+});
+
+export const importTransactionsSchema = z.object({
+  filePath: z.array(z.string()).optional(),
+  bankAccountId: z.string().uuid(),
+  currency: z.string(),
+  currentBalance: z.string().optional(),
+  inverted: z.boolean(),
+  mappings: z.object({
+    amount: z.string(),
+    date: z.string(),
+    description: z.string(),
+    balance: z.string().optional(),
+  }),
+});
+
+export const moveToReviewSchema = z.object({
+  transactionId: z.string().uuid().openapi({
+    description: "Transaction ID to move back to review.",
+  }),
+});

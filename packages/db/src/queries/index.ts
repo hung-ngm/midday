@@ -1,3 +1,4 @@
+export * from "./accounting-sync";
 export * from "./activities";
 export * from "./api-keys";
 export * from "./apps";
@@ -12,8 +13,10 @@ export * from "./documents";
 export * from "./exhange-rates";
 export * from "./inbox";
 export * from "./inbox-accounts";
+export * from "./inbox-blocklist";
 export * from "./inbox-embeddings";
 export * from "./inbox-matching";
+export * from "./invoice-products";
 export * from "./invoice-templates";
 export * from "./invoices";
 export * from "./reports";

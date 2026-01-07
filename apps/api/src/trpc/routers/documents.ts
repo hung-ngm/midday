@@ -9,6 +9,7 @@ import {
 } from "@api/schemas/documents";
 import { createTRPCRouter, protectedProcedure } from "@api/trpc/init";
 import {
+  checkDocumentAttachments,
   deleteDocument,
   getDocumentById,
   getDocuments,
@@ -16,9 +17,8 @@ import {
   updateDocuments,
 } from "@midday/db/queries";
 import { isMimeTypeSupportedForProcessing } from "@midday/documents/utils";
-import type { ProcessDocumentPayload } from "@midday/jobs/schema";
+import { triggerJob } from "@midday/job-client";
 import { remove, signedUrl } from "@midday/supabase/storage";
-import { tasks } from "@trigger.dev/sdk";
 import { TRPCError } from "@trpc/server";
 
 export const documentsRouter = createTRPCRouter({
@@ -34,11 +34,13 @@ export const documentsRouter = createTRPCRouter({
   getById: protectedProcedure
     .input(getDocumentSchema)
     .query(async ({ input, ctx: { db, teamId } }) => {
-      return getDocumentById(db, {
+      const result = await getDocumentById(db, {
         id: input.id,
         filePath: input.filePath,
         teamId: teamId!,
       });
+
+      return result ?? null;
     }),
 
   getRelatedDocuments: protectedProcedure
@@ -47,6 +49,15 @@ export const documentsRouter = createTRPCRouter({
       return getRelatedDocuments(db, {
         id: input.id,
         pageSize: input.pageSize,
+        teamId: teamId!,
+      });
+    }),
+
+  checkAttachments: protectedProcedure
+    .input(deleteDocumentSchema)
+    .query(async ({ input, ctx: { db, teamId } }) => {
+      return checkDocumentAttachments(db, {
+        id: input.id,
         teamId: teamId!,
       });
     }),
@@ -102,20 +113,24 @@ export const documentsRouter = createTRPCRouter({
         return;
       }
 
-      // Trigger processing task only for supported documents
-      return tasks.batchTrigger(
-        "process-document",
-        supportedDocuments.map(
-          (item) =>
-            ({
-              payload: {
-                filePath: item.filePath,
-                mimetype: item.mimetype,
-                teamId: teamId!,
-              },
-            }) as { payload: ProcessDocumentPayload },
+      // Trigger BullMQ jobs for each supported document
+      const jobResults = await Promise.all(
+        supportedDocuments.map((item) =>
+          triggerJob(
+            "process-document",
+            {
+              filePath: item.filePath,
+              mimetype: item.mimetype,
+              teamId: teamId!,
+            },
+            "documents",
+          ),
         ),
       );
+
+      return {
+        jobs: jobResults.map((result) => ({ id: result.id })),
+      };
     }),
 
   signedUrl: protectedProcedure

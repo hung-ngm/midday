@@ -12,6 +12,7 @@ import {
   updateTeamMemberSchema,
 } from "@api/schemas/team";
 import { createTRPCRouter, protectedProcedure } from "@api/trpc/init";
+import type { DeleteTeamPayload, InviteTeamMembersPayload } from "@jobs/schema";
 import {
   acceptTeamInvite,
   createTeam,
@@ -25,18 +26,13 @@ import {
   getInvitesByEmail,
   getTeamById,
   getTeamInvites,
-  getTeamMembers,
   getTeamMembersByTeamId,
   getTeamsByUserId,
   leaveTeam,
   updateTeamById,
   updateTeamMember,
 } from "@midday/db/queries";
-import type {
-  DeleteTeamPayload,
-  InviteTeamMembersPayload,
-  UpdateBaseCurrencyPayload,
-} from "@midday/jobs/schema";
+import { triggerJob } from "@midday/job-client";
 import { tasks } from "@trigger.dev/sdk";
 import { TRPCError } from "@trpc/server";
 
@@ -69,11 +65,40 @@ export const teamRouter = createTRPCRouter({
   create: protectedProcedure
     .input(createTeamSchema)
     .mutation(async ({ ctx: { db, session }, input }) => {
-      return createTeam(db, {
-        ...input,
+      const requestId = `trpc_team_create_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      console.log(`[${requestId}] TRPC team creation request`, {
         userId: session.user.id,
-        email: session.user.email!,
+        userEmail: session.user.email,
+        teamName: input.name,
+        baseCurrency: input.baseCurrency,
+        countryCode: input.countryCode,
+        switchTeam: input.switchTeam,
+        timestamp: new Date().toISOString(),
       });
+
+      try {
+        const teamId = await createTeam(db, {
+          ...input,
+          userId: session.user.id,
+          email: session.user.email!,
+        });
+
+        console.log(`[${requestId}] TRPC team creation successful`, {
+          teamId,
+          userId: session.user.id,
+        });
+
+        return teamId;
+      } catch (error) {
+        console.error(`[${requestId}] TRPC team creation failed`, {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          userId: session.user.id,
+          input,
+        });
+        throw error;
+      }
     }),
 
   leave: protectedProcedure
@@ -119,8 +144,11 @@ export const teamRouter = createTRPCRouter({
 
   delete: protectedProcedure
     .input(deleteTeamSchema)
-    .mutation(async ({ ctx: { db }, input }) => {
-      const data = await deleteTeam(db, input.teamId);
+    .mutation(async ({ ctx: { db, session }, input }) => {
+      const data = await deleteTeam(db, {
+        teamId: input.teamId,
+        userId: session.user.id,
+      });
 
       if (!data) {
         throw new TRPCError({
@@ -227,11 +255,13 @@ export const teamRouter = createTRPCRouter({
   updateBaseCurrency: protectedProcedure
     .input(updateBaseCurrencySchema)
     .mutation(async ({ ctx: { teamId }, input }) => {
-      const event = await tasks.trigger("update-base-currency", {
-        teamId: teamId!,
-        baseCurrency: input.baseCurrency,
-      } satisfies UpdateBaseCurrencyPayload);
-
-      return event;
+      return triggerJob(
+        "update-base-currency",
+        {
+          teamId: teamId!,
+          baseCurrency: input.baseCurrency,
+        },
+        "transactions",
+      );
     }),
 });

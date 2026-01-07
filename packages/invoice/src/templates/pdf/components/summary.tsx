@@ -1,4 +1,5 @@
 import { Text, View } from "@react-pdf/renderer";
+import { calculateTotal } from "../../../utils/calculate";
 import { formatCurrencyForPDF } from "../../../utils/pdf-format";
 
 interface SummaryProps {
@@ -17,9 +18,10 @@ interface SummaryProps {
   includeDiscount: boolean;
   includeVat: boolean;
   includeTax: boolean;
+  includeLineItemTax?: boolean;
   includeDecimals: boolean;
   subtotalLabel: string;
-  subtotal: number;
+  lineItems: { price?: number; quantity?: number; taxRate?: number }[];
 }
 
 export function Summary({
@@ -38,16 +40,29 @@ export function Summary({
   includeDiscount,
   includeVat,
   includeTax,
+  includeLineItemTax,
   includeDecimals,
   subtotalLabel,
-  subtotal,
+  lineItems,
 }: SummaryProps) {
   const maximumFractionDigits = includeDecimals ? 2 : 0;
 
+  // Calculate subtotal dynamically from line items (same as HTML template)
+  const { subTotal: calculatedSubtotal, tax: calculatedTax } = calculateTotal({
+    lineItems,
+    taxRate: taxRate ?? 0,
+    vatRate: vatRate ?? 0,
+    discount: discount ?? 0,
+    includeVat,
+    includeTax,
+    includeLineItemTax,
+  });
+
   const displayTotal = amount ?? 0;
-  const displaySubtotal = subtotal ?? 0;
+  const displaySubtotal = calculatedSubtotal;
   const displayVat = vat ?? 0;
-  const displayTax = tax ?? 0;
+  // Use calculated tax for line item tax mode, otherwise use the passed tax
+  const displayTax = includeLineItemTax ? calculatedTax : (tax ?? 0);
 
   return (
     <View
@@ -72,7 +87,7 @@ export function Summary({
         </Text>
       </View>
 
-      {includeDiscount && discount && (
+      {includeDiscount && discount != null && discount !== 0 && (
         <View style={{ flexDirection: "row", marginBottom: 5, width: "100%" }}>
           <Text style={{ fontSize: 9, flex: 1 }}>{discountLabel}</Text>
           <Text style={{ fontSize: 9, textAlign: "right" }}>
@@ -90,7 +105,7 @@ export function Summary({
       {includeVat && (
         <View style={{ flexDirection: "row", marginBottom: 5, width: "100%" }}>
           <Text style={{ fontSize: 9, flex: 1 }}>
-            {vatLabel} ({vatRate}%)
+            {vatLabel} ({String(vatRate ?? 0)}%)
           </Text>
           <Text style={{ fontSize: 9, textAlign: "right" }}>
             {currency &&
@@ -98,16 +113,16 @@ export function Summary({
                 amount: displayVat,
                 currency,
                 locale,
-                maximumFractionDigits,
+                maximumFractionDigits: 2,
               })}
           </Text>
         </View>
       )}
 
-      {includeTax && (
+      {includeTax && !includeLineItemTax && (
         <View style={{ flexDirection: "row", marginBottom: 5, width: "100%" }}>
           <Text style={{ fontSize: 9, flex: 1 }}>
-            {taxLabel} ({taxRate}%)
+            {taxLabel} ({String(taxRate ?? 0)}%)
           </Text>
           <Text style={{ fontSize: 9, textAlign: "right" }}>
             {currency &&
@@ -115,7 +130,22 @@ export function Summary({
                 amount: displayTax,
                 currency,
                 locale,
-                maximumFractionDigits,
+                maximumFractionDigits: 2,
+              })}
+          </Text>
+        </View>
+      )}
+
+      {includeLineItemTax && displayTax > 0 && (
+        <View style={{ flexDirection: "row", marginBottom: 5, width: "100%" }}>
+          <Text style={{ fontSize: 9, flex: 1 }}>{taxLabel}</Text>
+          <Text style={{ fontSize: 9, textAlign: "right" }}>
+            {currency &&
+              formatCurrencyForPDF({
+                amount: displayTax,
+                currency,
+                locale,
+                maximumFractionDigits: 2,
               })}
           </Text>
         </View>
@@ -140,7 +170,10 @@ export function Summary({
               amount: displayTotal,
               currency,
               locale,
-              maximumFractionDigits,
+              maximumFractionDigits:
+                includeTax || includeVat || includeLineItemTax
+                  ? 2
+                  : maximumFractionDigits,
             })}
         </Text>
       </View>

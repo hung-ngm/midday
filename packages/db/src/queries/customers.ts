@@ -2,8 +2,10 @@ import type { Database } from "@db/client";
 import {
   customerTags,
   customers,
+  exchangeRates,
   invoices,
   tags,
+  teams,
   trackerProjects,
 } from "@db/schema";
 import { buildSearchQuery } from "@midday/db/utils/search-query";
@@ -42,9 +44,7 @@ export const getCustomerById = async (
       countryCode: customers.countryCode,
       token: customers.token,
       contact: customers.contact,
-      invoiceCount: sql<number>`cast(count(${invoices.id}) as int)`.as(
-        "invoice_count",
-      ),
+      invoiceCount: sql<number>`cast(count(${invoices.id}) as int)`,
       projectCount: sql<number>`cast(count(${trackerProjects.id}) as int)`,
       tags: sql<CustomerTag[]>`
         coalesce(
@@ -130,9 +130,7 @@ export const getCustomers = async (
       countryCode: customers.countryCode,
       token: customers.token,
       contact: customers.contact,
-      invoiceCount: sql<number>`cast(count(${invoices.id}) as int)`.as(
-        "invoice_count",
-      ),
+      invoiceCount: sql<number>`cast(count(${invoices.id}) as int)`,
       projectCount: sql<number>`cast(count(${trackerProjects.id}) as int)`,
       tags: sql<CustomerTag[]>`
         coalesce(
@@ -379,6 +377,8 @@ export const upsertCustomer = async (
       countryCode: customers.countryCode,
       token: customers.token,
       contact: customers.contact,
+      invoiceCount: sql<number>`cast(count(${invoices.id}) as int)`,
+      projectCount: sql<number>`cast(count(${trackerProjects.id}) as int)`,
       tags: sql<CustomerTag[]>`
           coalesce(
             json_agg(
@@ -393,6 +393,8 @@ export const upsertCustomer = async (
     })
     .from(customers)
     .where(and(eq(customers.id, customerId), eq(customers.teamId, teamId)))
+    .leftJoin(invoices, eq(invoices.customerId, customers.id))
+    .leftJoin(trackerProjects, eq(trackerProjects.customerId, customers.id))
     .leftJoin(customerTags, eq(customerTags.customerId, customers.id))
     .leftJoin(tags, eq(tags.id, customerTags.tagId))
     .groupBy(customers.id);
@@ -410,8 +412,143 @@ export const deleteCustomer = async (
   params: DeleteCustomerParams,
 ) => {
   const { id, teamId } = params;
+
+  // First, get the customer data before deleting it
+  const customerToDelete = await getCustomerById(db, { id, teamId });
+
+  if (!customerToDelete) {
+    throw new Error("Customer not found");
+  }
+
+  // Delete the customer
   await db
     .delete(customers)
-    .where(and(eq(customers.id, id), eq(customers.teamId, teamId)))
-    .returning();
+    .where(and(eq(customers.id, id), eq(customers.teamId, teamId)));
+
+  // Return the deleted customer data
+  return customerToDelete;
 };
+
+export type GetCustomerInvoiceSummaryParams = {
+  customerId: string;
+  teamId: string;
+};
+
+export async function getCustomerInvoiceSummary(
+  db: Database,
+  params: GetCustomerInvoiceSummaryParams,
+) {
+  const { customerId, teamId } = params;
+
+  // Get team's base currency first
+  const [team] = await db
+    .select({ baseCurrency: teams.baseCurrency })
+    .from(teams)
+    .where(eq(teams.id, teamId))
+    .limit(1);
+
+  const baseCurrency = team?.baseCurrency || "USD";
+
+  // Get all invoices for this customer
+  const invoiceData = await db
+    .select({
+      amount: invoices.amount,
+      currency: invoices.currency,
+      status: invoices.status,
+    })
+    .from(invoices)
+    .where(
+      and(eq(invoices.customerId, customerId), eq(invoices.teamId, teamId)),
+    );
+
+  if (invoiceData.length === 0) {
+    return {
+      totalAmount: 0,
+      paidAmount: 0,
+      outstandingAmount: 0,
+      invoiceCount: 0,
+      currency: baseCurrency,
+    };
+  }
+
+  // Collect unique currencies that need conversion (excluding base currency)
+  const currenciesToConvert = [
+    ...new Set(
+      invoiceData
+        .map((inv) => inv.currency || baseCurrency)
+        .filter((currency) => currency !== baseCurrency),
+    ),
+  ];
+
+  // Fetch all exchange rates
+  const exchangeRateMap = new Map<string, number>();
+  if (currenciesToConvert.length > 0) {
+    const exchangeRatesData = await db
+      .select({
+        base: exchangeRates.base,
+        rate: exchangeRates.rate,
+      })
+      .from(exchangeRates)
+      .where(
+        and(
+          inArray(exchangeRates.base, currenciesToConvert),
+          eq(exchangeRates.target, baseCurrency),
+        ),
+      );
+
+    // Build a map for O(1) lookup
+    for (const rateData of exchangeRatesData) {
+      if (rateData.base && rateData.rate) {
+        exchangeRateMap.set(rateData.base, Number(rateData.rate));
+      }
+    }
+  }
+
+  // Convert all amounts to base currency and calculate totals
+  let totalAmount = 0;
+  let paidAmount = 0;
+  let outstandingAmount = 0;
+  let invoiceCount = 0;
+
+  for (const invoice of invoiceData) {
+    const amount = Number(invoice.amount) || 0;
+    const currency = invoice.currency || baseCurrency;
+
+    let convertedAmount = amount;
+    let canConvert = true;
+
+    // Convert to base currency if different
+    if (currency !== baseCurrency) {
+      const exchangeRate = exchangeRateMap.get(currency);
+      if (exchangeRate) {
+        convertedAmount = amount * exchangeRate;
+      } else {
+        // Skip invoices with missing exchange rates to avoid mixing currencies
+        // This prevents silently producing incorrect totals
+        canConvert = false;
+      }
+    }
+
+    // Only include invoices that can be properly converted and are paid or outstanding
+    // Draft, canceled, and scheduled invoices don't count toward financial totals
+    if (canConvert) {
+      if (invoice.status === "paid") {
+        paidAmount += convertedAmount;
+        totalAmount += convertedAmount;
+        invoiceCount++;
+      } else if (invoice.status === "unpaid" || invoice.status === "overdue") {
+        outstandingAmount += convertedAmount;
+        totalAmount += convertedAmount;
+        invoiceCount++;
+      }
+    }
+  }
+
+  return {
+    totalAmount: Math.round(totalAmount * 100) / 100,
+    paidAmount: Math.round(paidAmount * 100) / 100,
+    outstandingAmount: Math.round(outstandingAmount * 100) / 100,
+    invoiceCount,
+    currency: baseCurrency,
+  };
+}

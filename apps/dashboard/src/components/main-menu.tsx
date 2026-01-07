@@ -1,5 +1,6 @@
 "use client";
 
+import { useChatInterface } from "@/hooks/use-chat-interface";
 import { cn } from "@midday/ui/cn";
 import { Icons } from "@midday/ui/icons";
 import Link from "next/link";
@@ -24,11 +25,6 @@ const items = [
     name: "Overview",
   },
   {
-    path: "/inbox",
-    name: "Inbox",
-    children: [{ path: "/inbox/settings", name: "Settings" }],
-  },
-  {
     path: "/transactions",
     name: "Transactions",
     children: [
@@ -48,14 +44,15 @@ const items = [
     ],
   },
   {
+    path: "/inbox",
+    name: "Inbox",
+    children: [{ path: "/inbox/settings", name: "Settings" }],
+  },
+  {
     path: "/invoices",
     name: "Invoices",
     children: [
-      { path: "/invoices?statuses=paid", name: "Paid" },
-      { path: "/invoices?statuses=unpaid", name: "Unpaid" },
-      { path: "/invoices?statuses=overdue", name: "Overdue" },
-      { path: "/invoices?statuses=draft", name: "Draft" },
-      { path: "/invoices?statuses=scheduled", name: "Scheduled" },
+      { path: "/invoices/products", name: "Products" },
       { path: "/invoices?type=create", name: "Create new" },
     ],
   },
@@ -93,6 +90,18 @@ const items = [
       { path: "/settings/developer", name: "Developer" },
     ],
   },
+];
+
+// Known menu base paths that should not be treated as chat IDs
+const KNOWN_MENU_PATHS = [
+  "/transactions",
+  "/inbox",
+  "/invoices",
+  "/tracker",
+  "/customers",
+  "/vault",
+  "/apps",
+  "/settings",
 ];
 
 interface ItemProps {
@@ -137,7 +146,7 @@ const ChildItem = ({
         <div
           className={cn(
             "ml-[35px] mr-[15px] h-[32px] flex items-center",
-            "border-l border-[#DCDAD2] dark:border-[#2C2C2C] pl-3",
+            "border-l border-[#e6e6e6] dark:border-[#1d1d1d] pl-3",
             "transition-all duration-200 ease-out",
             showChild
               ? "opacity-100 translate-x-0"
@@ -200,7 +209,7 @@ const Item = ({
             className={cn(
               "border border-transparent h-[40px] transition-all duration-200 ease-&lsqb;cubic-bezier(0.4,0,0.2,1)&rsqb; ml-[15px] mr-[15px]",
               isActive &&
-                "bg-[#F2F1EF] dark:bg-secondary border-[#DCDAD2] dark:border-[#2C2C2C]",
+                "bg-[#f7f7f7] dark:bg-[#131313] border-[#e6e6e6] dark:border-[#1d1d1d]",
               isExpanded ? "w-[calc(100%-30px)]" : "w-[40px]",
             )}
           />
@@ -278,8 +287,18 @@ type Props = {
 
 export function MainMenu({ onSelect, isExpanded = false }: Props) {
   const pathname = usePathname();
+  const { isChatPage } = useChatInterface();
   const part = pathname?.split("/")[1];
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
+
+  // Check if current pathname is a known menu path (including sub-paths)
+  const pathnameWithoutQuery = pathname?.split("?")[0] || "";
+  const isKnownMenuPath = KNOWN_MENU_PATHS.some((knownPath) =>
+    pathnameWithoutQuery.startsWith(knownPath),
+  );
+
+  // Only treat as chat page if isChatPage is true AND it's not a known menu path
+  const isValidChatPage = isChatPage && !isKnownMenuPath;
 
   // Reset expanded item when sidebar expands/collapses
   useEffect(() => {
@@ -291,8 +310,10 @@ export function MainMenu({ onSelect, isExpanded = false }: Props) {
       <nav className="w-full">
         <div className="flex flex-col gap-2">
           {items.map((item) => {
+            // Check if current path matches item path or is a child of it
             const isActive =
               (pathname === "/" && item.path === "/") ||
+              (item.path === "/" && isValidChatPage) ||
               (pathname !== "/" && item.path.startsWith(`/${part}`));
 
             return (

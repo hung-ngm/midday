@@ -3,9 +3,9 @@ import {
   differenceInDays,
   differenceInMonths,
   format,
-  isSameYear,
   startOfDay,
 } from "date-fns";
+import { normalizeCurrencyCode } from "./currency";
 
 export function formatSize(bytes: number): string {
   const units = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte"];
@@ -40,16 +40,33 @@ export function formatAmount({
     return;
   }
 
+  // Normalize currency code to ISO 4217 format
+  const normalizedCurrency = normalizeCurrencyCode(currency);
+
   // Fix: locale can be null, but Intl.NumberFormat expects string | string[] | undefined
   // So, if locale is null, pass undefined instead
   const safeLocale = locale ?? undefined;
 
-  return Intl.NumberFormat(safeLocale, {
-    style: "currency",
-    currency,
-    minimumFractionDigits,
-    maximumFractionDigits,
-  }).format(amount);
+  try {
+    return Intl.NumberFormat(safeLocale, {
+      style: "currency",
+      currency: normalizedCurrency,
+      minimumFractionDigits,
+      maximumFractionDigits,
+    }).format(amount);
+  } catch (error) {
+    // Fallback to USD if currency is invalid
+    console.warn(
+      `Invalid currency code: ${currency} (normalized to ${normalizedCurrency}), falling back to USD`,
+      error,
+    );
+    return Intl.NumberFormat(safeLocale, {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits,
+      maximumFractionDigits,
+    }).format(amount);
+  }
 }
 
 export function secondsToHoursAndMinutes(seconds: number) {
@@ -82,32 +99,6 @@ export function calculateAvgBurnRate(data: BurnRateData[] | null) {
   }
 
   return data?.reduce((acc, curr) => acc + curr.value, 0) / data?.length;
-}
-
-export function formatDate(
-  date: string,
-  dateFormat?: string | null,
-  checkYear = true,
-) {
-  if (checkYear && isSameYear(new Date(), new Date(date))) {
-    return format(new Date(date), "MMM d");
-  }
-
-  return format(new Date(date), dateFormat ?? "P");
-}
-
-export function getInitials(value: string) {
-  const formatted = value.toUpperCase().replace(/[\s.-]/g, "");
-
-  if (formatted.split(" ").length > 1) {
-    return `${formatted.charAt(0)}${formatted.charAt(1)}`;
-  }
-
-  if (value.length > 1) {
-    return formatted.charAt(0) + formatted.charAt(1);
-  }
-
-  return formatted.charAt(0);
 }
 
 export function formatAccountName({
@@ -197,4 +188,26 @@ export function formatRelativeTime(date: Date): string {
   }
 
   return "just now";
+}
+
+export function formatCompactAmount(
+  amount: number,
+  locale?: string | null,
+): string {
+  const absAmount = Math.abs(amount);
+  const safeLocale = locale ?? "en-US";
+
+  if (absAmount >= 1000000) {
+    const formatted = (absAmount / 1000000).toLocaleString(safeLocale, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
+    return `${formatted}m`;
+  }
+  // Always show in thousands notation
+  const formatted = (absAmount / 1000).toLocaleString(safeLocale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  return `${formatted}k`;
 }

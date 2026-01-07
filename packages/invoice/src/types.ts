@@ -3,6 +3,27 @@ export type LineItem = {
   quantity?: number;
   price?: number;
   unit?: string;
+  // Optional product reference for smart autocomplete
+  productId?: string;
+  // Per-line-item tax rate (percentage, 0-100)
+  taxRate?: number;
+};
+
+export type InvoiceProduct = {
+  id: string;
+  createdAt: string;
+  updatedAt: string | null;
+  teamId: string;
+  createdBy: string | null;
+  name: string;
+  description: string | null;
+  price: number | null;
+  currency: string | null;
+  unit: string | null;
+  taxRate: number | null;
+  isActive: boolean;
+  usageCount: number;
+  lastUsedAt: string | null;
 };
 
 export type Invoice = {
@@ -23,7 +44,7 @@ export type Invoice = {
   vat: number | null;
   tax: number | null;
   filePath: string[] | null;
-  status: "draft" | "overdue" | "paid" | "unpaid" | "canceled" | "scheduled";
+  status: "draft" | "overdue" | "paid" | "unpaid" | "canceled" | "scheduled" | "refunded";
   viewedAt: string | null;
   fromDetails: EditorDoc | null;
   issueDate: string | null;
@@ -34,7 +55,6 @@ export type Invoice = {
   token: string;
   sentTo: string | null;
   discount: number | null;
-  subtotal: number | null;
   topBlock: EditorDoc | null;
   bottomBlock: EditorDoc | null;
   customer: {
@@ -71,6 +91,7 @@ export type Template = {
   currency: string;
   paymentDetails: EditorDoc | null;
   fromDetails: EditorDoc | null;
+  noteDetails: EditorDoc | null;
   dateFormat: string;
   includeVat: boolean;
   includeTax: boolean;
@@ -78,11 +99,14 @@ export type Template = {
   includeDecimals: boolean;
   includeUnits: boolean;
   includeQr: boolean;
+  includeLineItemTax?: boolean;
+  lineItemTaxLabel?: string;
   taxRate: number;
   vatRate: number;
   size: "a4" | "letter";
   deliveryType: "create" | "create_and_send" | "scheduled";
   locale: string;
+  paymentEnabled?: boolean;
 };
 
 export interface EditorDoc {

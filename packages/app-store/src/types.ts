@@ -3,6 +3,7 @@ export interface UnifiedApp {
   name: string;
   category: string;
   active: boolean;
+  beta?: boolean;
   logo?: React.ComponentType | string;
   short_description?: string;
   description?: string;
@@ -11,7 +12,10 @@ export interface UnifiedApp {
   type: "official" | "external";
 
   // Official app specific
-  onInitialize?: () => Promise<void>;
+  onInitialize?: (params: {
+    accessToken: string;
+    onComplete?: () => void;
+  }) => Promise<void>;
   settings?: Array<{
     id: string;
     label: string;
@@ -21,6 +25,9 @@ export interface UnifiedApp {
     value: any;
   }>;
   userSettings?: Record<string, any>;
+
+  // Inbox app specific (Gmail/Outlook)
+  inboxAccountId?: string;
 
   // External app specific
   clientId?: string;

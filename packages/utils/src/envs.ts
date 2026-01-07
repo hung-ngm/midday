@@ -1,4 +1,9 @@
 export function getAppUrl() {
+  // Allow explicit override via DASHBOARD_URL env var (useful for worker/non-Vercel deployments)
+  if (process.env.DASHBOARD_URL) {
+    return process.env.DASHBOARD_URL;
+  }
+
   if (
     process.env.VERCEL_ENV === "production" ||
     process.env.NODE_ENV === "production"

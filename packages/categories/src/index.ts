@@ -61,3 +61,20 @@ export const TAX_TYPES = [
   "income_tax",
   "none",
 ] as const;
+
+// Revenue category constants
+export const REVENUE_CATEGORIES = [
+  "revenue",
+  "income",
+  "product-sales",
+  "service-revenue",
+  "consulting-revenue",
+  "subscription-revenue",
+  "interest-income",
+  "other-income",
+] as const;
+
+export const CONTRA_REVENUE_CATEGORIES = [
+  "customer-refunds",
+  "chargebacks-disputes",
+] as const;

@@ -1,9 +1,13 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { protectedMiddleware } from "../middleware";
+import { appsRouter } from "./apps";
 import { bankAccountsRouter } from "./bank-accounts";
+import { chatRouter } from "./chat";
 import { customersRouter } from "./customers";
 import { documentsRouter } from "./documents";
+import { filesRouter } from "./files";
 import { inboxRouter } from "./inbox";
+import { invoicePaymentsRouter } from "./invoice-payments";
 import { invoicesRouter } from "./invoices";
 import { notificationsRouter } from "./notifications";
 import oauthRouter from "./oauth";
@@ -14,12 +18,18 @@ import { teamsRouter } from "./teams";
 import { trackerEntriesRouter } from "./tracker-entries";
 import { trackerProjectsRouter } from "./tracker-projects";
 import { transactionsRouter } from "./transactions";
+import { transcriptionRouter } from "./transcription";
 import { usersRouter } from "./users";
+import { webhookRouter } from "./webhooks";
 
 const routers = new OpenAPIHono();
 
-// Mount OAuth routes first (publicly accessible)
+// Mount public routes first
 routers.route("/oauth", oauthRouter);
+routers.route("/webhook", webhookRouter);
+routers.route("/files", filesRouter);
+routers.route("/apps", appsRouter);
+routers.route("/invoice-payments", invoicePaymentsRouter);
 
 // Apply protected middleware to all subsequent routes
 routers.use(...protectedMiddleware);
@@ -39,5 +49,7 @@ routers.route("/search", searchRouter);
 routers.route("/reports", reportsRouter);
 routers.route("/tracker-projects", trackerProjectsRouter);
 routers.route("/tracker-entries", trackerEntriesRouter);
+routers.route("/chat", chatRouter);
+routers.route("/transcription", transcriptionRouter);
 
 export { routers };

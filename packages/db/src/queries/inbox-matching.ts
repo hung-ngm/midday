@@ -3,11 +3,23 @@ import { inbox, transactionMatchSuggestions } from "@db/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { createActivity } from "./activities";
 import { matchTransaction, updateInbox } from "./inbox";
+import { checkInboxEmbeddingExists } from "./inbox-embeddings";
 import {
   type MatchResult,
   createMatchSuggestion,
   findMatches,
 } from "./transaction-matching";
+
+// Type guard to check if result has a suggestion
+export function hasSuggestion(result: {
+  action: "auto_matched" | "suggestion_created" | "no_match_yet";
+  suggestion?: MatchResult;
+}): result is {
+  action: "auto_matched" | "suggestion_created";
+  suggestion: MatchResult;
+} {
+  return result.action !== "no_match_yet" && result.suggestion !== undefined;
+}
 
 // Calculate and store suggestions for an inbox item
 export async function calculateInboxSuggestions(
@@ -18,6 +30,16 @@ export async function calculateInboxSuggestions(
   suggestion?: MatchResult;
 }> {
   const { teamId, inboxId } = params;
+
+  // Check if embedding exists before processing
+  // If embedding doesn't exist yet, skip processing and leave status unchanged
+  // This handles race conditions where batch-process-matching runs before embed-inbox completes
+  const embeddingExists = await checkInboxEmbeddingExists(db, { inboxId });
+  if (!embeddingExists) {
+    // Embedding not ready yet - return early without changing status
+    // The scheduler will retry later when embedding is available
+    return { action: "no_match_yet" };
+  }
 
   // Set status to analyzing while we process
   await updateInbox(db, {
@@ -126,7 +148,7 @@ export async function confirmSuggestedMatch(
     suggestionId: string;
     inboxId: string;
     transactionId: string;
-    userId: string;
+    userId?: string | null;
   },
 ) {
   const { teamId, suggestionId, inboxId, transactionId, userId } = params;
@@ -156,7 +178,7 @@ export async function confirmSuggestedMatch(
 
   createActivity(db, {
     teamId,
-    userId,
+    userId: userId ?? undefined,
     type: "inbox_match_confirmed",
     source: "user",
     priority: 7,
@@ -179,7 +201,7 @@ export async function declineSuggestedMatch(
   params: {
     suggestionId: string;
     inboxId: string;
-    userId: string;
+    userId?: string | null;
     teamId: string;
   },
 ) {
@@ -289,4 +311,38 @@ export async function getPendingInboxForMatching(
     )
     .orderBy(desc(inbox.createdAt)) // Newest first - prioritize recent items
     .limit(limit);
+}
+
+// Get a suggestion by inbox and transaction IDs
+export async function getSuggestionByInboxAndTransaction(
+  db: Database,
+  params: {
+    inboxId: string;
+    transactionId: string;
+    teamId: string;
+  },
+) {
+  const { inboxId, transactionId, teamId } = params;
+
+  const [result] = await db
+    .select({
+      id: transactionMatchSuggestions.id,
+      inboxId: transactionMatchSuggestions.inboxId,
+      transactionId: transactionMatchSuggestions.transactionId,
+      status: transactionMatchSuggestions.status,
+      confidenceScore: transactionMatchSuggestions.confidenceScore,
+      matchType: transactionMatchSuggestions.matchType,
+    })
+    .from(transactionMatchSuggestions)
+    .where(
+      and(
+        eq(transactionMatchSuggestions.inboxId, inboxId),
+        eq(transactionMatchSuggestions.transactionId, transactionId),
+        eq(transactionMatchSuggestions.teamId, teamId),
+        eq(transactionMatchSuggestions.status, "pending"),
+      ),
+    )
+    .limit(1);
+
+  return result || null;
 }

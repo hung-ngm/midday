@@ -1,12 +1,12 @@
 "use client";
 
-import { AssignedUser } from "@/components/assigned-user";
-import { Category } from "@/components/category";
 import { FormatAmount } from "@/components/format-amount";
+import { InlineAssignUser } from "@/components/inline-assign-user";
+import { InlineSelectCategory } from "@/components/inline-select-category";
+import { InlineSelectTags } from "@/components/inline-select-tags";
 import { TransactionBankAccount } from "@/components/transaction-bank-account";
 import { TransactionMethod } from "@/components/transaction-method";
 import { TransactionStatus } from "@/components/transaction-status";
-import { formatDate } from "@/utils/format";
 import type { RouterOutputs } from "@api/trpc/routers/_app";
 import { Badge } from "@midday/ui/badge";
 import { Button } from "@midday/ui/button";
@@ -22,6 +22,7 @@ import {
 import { Icons } from "@midday/ui/icons";
 import { Spinner } from "@midday/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@midday/ui/tooltip";
+import { formatDate } from "@midday/utils/format";
 import type { ColumnDef } from "@tanstack/react-table";
 import { memo, useCallback } from "react";
 
@@ -31,8 +32,23 @@ const SelectCell = memo(
   ({
     checked,
     onChange,
-  }: { checked: boolean; onChange: (value: boolean) => void }) => (
-    <Checkbox checked={checked} onCheckedChange={onChange} />
+    onShiftClick,
+  }: {
+    checked: boolean;
+    onChange: (value: boolean) => void;
+    onShiftClick?: () => void;
+  }) => (
+    <div
+      onClick={(e) => {
+        if (e.shiftKey && onShiftClick) {
+          e.preventDefault();
+          e.stopPropagation();
+          onShiftClick();
+        }
+      }}
+    >
+      <Checkbox checked={checked} onCheckedChange={onChange} />
+    </div>
   ),
 );
 
@@ -54,17 +70,17 @@ const DescriptionCell = memo(
     name,
     description,
     status,
-    categorySlug,
+    amount,
   }: {
     name: string;
     description?: string;
     status?: string;
-    categorySlug?: string | null;
+    amount: number;
   }) => (
     <div className="flex items-center space-x-2">
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className={cn(categorySlug === "income" && "text-[#00C969]")}>
+          <span className={cn(amount > 0 && "text-[#00C969]")}>
             <div className="flex space-x-2 items-center">
               <span className="line-clamp-1 text-ellipsis max-w-[100px] md:max-w-none">
                 {name}
@@ -99,15 +115,11 @@ const AmountCell = memo(
   ({
     amount,
     currency,
-    categorySlug,
   }: {
     amount: number;
     currency: string;
-    categorySlug?: string | null;
   }) => (
-    <span
-      className={cn("text-sm", categorySlug === "income" && "text-[#00C969]")}
-    >
+    <span className={cn("text-sm", amount > 0 && "text-[#00C969]")}>
       <FormatAmount amount={amount} currency={currency} />
     </span>
   ),
@@ -143,16 +155,29 @@ const ActionsCell = memo(
     onCopyUrl,
     onUpdateTransaction,
     onDeleteTransaction,
+    onEditTransaction,
+    onMoveToReview,
   }: {
     transaction: Transaction;
     onViewDetails?: (id: string) => void;
     onCopyUrl?: (id: string) => void;
-    onUpdateTransaction?: (data: { id: string; status: string }) => void;
+    onUpdateTransaction?: (data: {
+      id: string;
+      status?: string;
+      categorySlug?: string | null;
+      assignedId?: string | null;
+    }) => void;
     onDeleteTransaction?: (id: string) => void;
+    onEditTransaction?: (id: string) => void;
+    onMoveToReview?: (id: string) => void;
   }) => {
     const handleViewDetails = useCallback(() => {
       onViewDetails?.(transaction.id);
     }, [transaction.id, onViewDetails]);
+
+    const handleEditTransaction = useCallback(() => {
+      onEditTransaction?.(transaction.id);
+    }, [transaction.id, onEditTransaction]);
 
     const handleCopyUrl = useCallback(() => {
       onCopyUrl?.(transaction.id);
@@ -170,58 +195,87 @@ const ActionsCell = memo(
       onUpdateTransaction?.({ id: transaction.id, status: "excluded" });
     }, [transaction.id, onUpdateTransaction]);
 
+    const handleUpdateToExported = useCallback(() => {
+      onUpdateTransaction?.({ id: transaction.id, status: "exported" });
+    }, [transaction.id, onUpdateTransaction]);
+
     const handleDeleteTransaction = useCallback(() => {
       onDeleteTransaction?.(transaction.id);
     }, [transaction.id, onDeleteTransaction]);
 
+    const handleMoveToReview = useCallback(() => {
+      onMoveToReview?.(transaction.id);
+    }, [transaction.id, onMoveToReview]);
+
     return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="h-8 w-8 p-0">
-            <span className="sr-only">Open menu</span>
-            <Icons.MoreHoriz />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={handleViewDetails}>
-            View details
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleCopyUrl}>Share URL</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          {!transaction.manual && transaction.status === "excluded" && (
-            <DropdownMenuItem onClick={handleUpdateToPosted}>
-              Include
+      <div className="flex justify-center w-full">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-8 w-8 p-0">
+              <span className="sr-only">Open menu</span>
+              <Icons.MoreHoriz className="text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={handleViewDetails}>
+              View details
             </DropdownMenuItem>
-          )}
+            {transaction.manual && (
+              <DropdownMenuItem onClick={handleEditTransaction}>
+                Edit transaction
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={handleCopyUrl}>
+              Share URL
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {!transaction.manual && transaction.status === "excluded" && (
+              <DropdownMenuItem onClick={handleUpdateToPosted}>
+                Include
+              </DropdownMenuItem>
+            )}
 
-          {!transaction.isFulfilled && (
-            <DropdownMenuItem onClick={handleUpdateToCompleted}>
-              Mark as completed
-            </DropdownMenuItem>
-          )}
+            {!transaction.isFulfilled && (
+              <DropdownMenuItem onClick={handleUpdateToCompleted}>
+                Mark as completed
+              </DropdownMenuItem>
+            )}
 
-          {transaction.isFulfilled && transaction.status === "completed" && (
-            <DropdownMenuItem onClick={handleUpdateToPosted}>
-              Mark as uncompleted
-            </DropdownMenuItem>
-          )}
+            {transaction.isFulfilled && transaction.status === "completed" && (
+              <DropdownMenuItem onClick={handleUpdateToPosted}>
+                Mark as uncompleted
+              </DropdownMenuItem>
+            )}
 
-          {!transaction.manual && transaction.status !== "excluded" && (
-            <DropdownMenuItem onClick={handleUpdateToExcluded}>
-              Exclude
-            </DropdownMenuItem>
-          )}
+            {!transaction.isExported && transaction.status !== "exported" && (
+              <DropdownMenuItem onClick={handleUpdateToExported}>
+                Mark as exported
+              </DropdownMenuItem>
+            )}
 
-          {transaction.manual && (
-            <DropdownMenuItem
-              className="text-destructive"
-              onClick={handleDeleteTransaction}
-            >
-              Delete
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            {(transaction.isExported || transaction.status === "exported") && (
+              <DropdownMenuItem onClick={handleMoveToReview}>
+                Move to review
+              </DropdownMenuItem>
+            )}
+
+            {!transaction.manual && transaction.status !== "excluded" && (
+              <DropdownMenuItem onClick={handleUpdateToExcluded}>
+                Exclude
+              </DropdownMenuItem>
+            )}
+
+            {transaction.manual && (
+              <DropdownMenuItem
+                className="text-destructive"
+                onClick={handleDeleteTransaction}
+              >
+                Delete
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     );
   },
 );
@@ -231,25 +285,62 @@ ActionsCell.displayName = "ActionsCell";
 export const columns: ColumnDef<Transaction>[] = [
   {
     id: "select",
+    size: 50,
+    minSize: 50,
+    maxSize: 50,
+    enableResizing: false,
     meta: {
+      sticky: true,
+      skeleton: { type: "checkbox" },
       className:
-        "md:sticky bg-background group-hover:bg-[#F2F1EF] group-hover:dark:bg-secondary z-10 border-r border-border before:absolute before:right-0 before:top-0 before:bottom-0 before:w-px before:bg-border after:absolute after:right-[-24px] after:top-0 after:bottom-0 after:w-6 after:bg-gradient-to-l after:from-transparent after:to-background group-hover:after:to-muted after:z-[-1]",
+        "w-[50px] min-w-[50px] md:sticky md:left-[var(--stick-left)] bg-background group-hover:bg-[#F2F1EF] group-hover:dark:bg-[#0f0f0f] z-10",
     },
-    cell: ({ row }) => (
-      <SelectCell
-        checked={row.getIsSelected()}
-        onChange={(value) => row.toggleSelected(!!value)}
-      />
-    ),
+    cell: ({ row, table }) => {
+      const meta = table.options.meta;
+      const rows = table.getRowModel().rows;
+      const rowIndex = rows.findIndex((r) => r.id === row.id);
+      const handleShiftClick = () => {
+        if (
+          meta?.lastClickedIndex !== null &&
+          meta?.lastClickedIndex !== undefined &&
+          meta?.handleShiftClickRange
+        ) {
+          meta.handleShiftClickRange(meta.lastClickedIndex, rowIndex);
+        }
+        if (meta?.setLastClickedIndex) {
+          meta.setLastClickedIndex(rowIndex);
+        }
+      };
+
+      return (
+        <SelectCell
+          checked={row.getIsSelected()}
+          onChange={(value) => {
+            row.toggleSelected(!!value);
+            if (meta?.setLastClickedIndex) {
+              meta.setLastClickedIndex(rowIndex);
+            }
+          }}
+          onShiftClick={handleShiftClick}
+        />
+      );
+    },
     enableSorting: false,
     enableHiding: false,
   },
   {
     accessorKey: "date",
     header: "Date",
+    size: 110,
+    minSize: 110,
+    maxSize: 110,
+    enableResizing: false,
     meta: {
+      sticky: true,
+      skeleton: { type: "text", width: "w-16" },
+      headerLabel: "Date",
       className:
-        "md:sticky bg-background group-hover:bg-[#F2F1EF] group-hover:dark:bg-secondary z-10 border-r border-border before:absolute before:right-0 before:top-0 before:bottom-0 before:w-px before:bg-border after:absolute after:right-[-24px] after:top-0 after:bottom-0 after:w-6 after:bg-gradient-to-l after:from-transparent after:to-background group-hover:after:to-muted after:z-[-1]",
+        "w-[110px] min-w-[110px] md:sticky md:left-[var(--stick-left)] bg-background group-hover:bg-[#F2F1EF] group-hover:dark:bg-[#0f0f0f] z-10",
     },
     cell: ({ row, table }) => (
       <DateCell
@@ -262,47 +353,78 @@ export const columns: ColumnDef<Transaction>[] = [
   {
     accessorKey: "description",
     header: "Description",
+    size: 320,
+    minSize: 200,
+    maxSize: 600,
+    enableResizing: true,
     meta: {
+      sticky: true,
+      skeleton: { type: "text", width: "w-40" },
+      headerLabel: "Description",
       className:
-        "md:sticky bg-background group-hover:bg-[#F2F1EF] group-hover:dark:bg-secondary z-10 border-r border-border before:absolute before:right-0 before:top-0 before:bottom-0 before:w-px before:bg-border after:absolute after:right-[-24px] after:top-0 after:bottom-0 after:w-6 after:bg-gradient-to-l after:from-transparent after:to-background group-hover:after:to-muted after:z-[-1]",
+        "w-[320px] min-w-[200px] md:sticky md:left-[var(--stick-left)] bg-background group-hover:bg-[#F2F1EF] group-hover:dark:bg-[#0f0f0f] z-10",
     },
     cell: ({ row }) => (
       <DescriptionCell
         name={row.original.name}
         description={row.original.description ?? undefined}
         status={row.original.status ?? undefined}
-        categorySlug={row.original?.category?.slug}
+        amount={row.original.amount}
       />
     ),
   },
   {
     accessorKey: "amount",
     header: "Amount",
+    size: 170,
+    minSize: 100,
+    maxSize: 400,
+    enableResizing: true,
     meta: {
-      className: "border-l border-border",
+      skeleton: { type: "text", width: "w-20" },
+      headerLabel: "Amount",
+      className: "w-[170px] min-w-[100px]",
     },
     cell: ({ row }) => (
       <AmountCell
         amount={row.original.amount}
         currency={row.original.currency}
-        categorySlug={row.original?.category?.slug}
       />
     ),
   },
   {
     accessorKey: "taxAmount",
     header: "Tax Amount",
+    size: 170,
+    minSize: 100,
+    maxSize: 400,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "text", width: "w-24" },
+      headerLabel: "Tax Amount",
+      className: "w-[170px] min-w-[100px]",
+    },
     cell: ({ row }) => (
       <FormatAmount
-        amount={row.original.taxAmount}
+        amount={row.original.taxAmount ?? 0}
         currency={row.original.currency}
+        maximumFractionDigits={2}
       />
     ),
   },
   {
     accessorKey: "category",
     header: "Category",
-    cell: ({ row }) => {
+    size: 250,
+    minSize: 150,
+    maxSize: 400,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "icon-text", width: "w-28" },
+      headerLabel: "Category",
+      className: "w-[250px] min-w-[150px]",
+    },
+    cell: ({ row, table }) => {
       // Show analyzing state when enrichment is not completed
       if (!row.original.enrichmentCompleted) {
         return (
@@ -324,10 +446,27 @@ export const columns: ColumnDef<Transaction>[] = [
         );
       }
 
+      const meta = table.options.meta;
+
       return (
-        <Category
-          name={row.original?.category?.name ?? ""}
-          color={row.original?.category?.color ?? ""}
+        <InlineSelectCategory
+          selected={
+            row.original.category
+              ? {
+                  id: row.original.category.id,
+                  name: row.original.category.name,
+                  color: row.original.category.color,
+                  slug: row.original.category.slug ?? "",
+                }
+              : undefined
+          }
+          onChange={(category) => {
+            meta?.updateTransaction?.({
+              id: row.original.id,
+              categorySlug: category.slug,
+              categoryName: category.name,
+            });
+          }}
         />
       );
     },
@@ -335,19 +474,52 @@ export const columns: ColumnDef<Transaction>[] = [
   {
     accessorKey: "counterparty",
     header: "From / To",
-    cell: ({ row }) => row.original.counterpartyName ?? "-",
+    size: 200,
+    minSize: 120,
+    maxSize: 400,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "text", width: "w-28" },
+      headerLabel: "From / To",
+      className: "w-[200px] min-w-[120px]",
+    },
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">
+        {row.original.counterpartyName ?? "-"}
+      </span>
+    ),
   },
   {
     accessorKey: "tags",
     header: "Tags",
+    size: 280,
+    minSize: 150,
+    maxSize: 500,
+    enableResizing: true,
     meta: {
-      className: "w-[280px] max-w-[280px]",
+      skeleton: { type: "tags" },
+      headerLabel: "Tags",
+      className: "w-[280px] min-w-[150px]",
     },
-    cell: ({ row }) => <TagsCell tags={row.original.tags} />,
+    cell: ({ row }) => (
+      <InlineSelectTags
+        transactionId={row.original.id}
+        tags={row.original.tags}
+      />
+    ),
   },
   {
     accessorKey: "bank_account",
     header: "Account",
+    size: 250,
+    minSize: 150,
+    maxSize: 400,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "avatar-text", width: "w-32" },
+      headerLabel: "Account",
+      className: "w-[250px] min-w-[150px]",
+    },
     cell: ({ row }) => (
       <TransactionBankAccount
         name={row.original?.account?.name ?? undefined}
@@ -358,46 +530,99 @@ export const columns: ColumnDef<Transaction>[] = [
   {
     accessorKey: "method",
     header: "Method",
+    size: 140,
+    minSize: 100,
+    maxSize: 300,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "text", width: "w-16" },
+      headerLabel: "Method",
+      className: "w-[140px] min-w-[100px]",
+    },
     cell: ({ row }) => <TransactionMethod method={row.original.method} />,
   },
   {
     accessorKey: "assigned",
     header: "Assigned",
-    cell: ({ row }) => {
-      if (!row.original.assigned) {
-        return null;
-      }
+    size: 220,
+    minSize: 150,
+    maxSize: 400,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "avatar-text", width: "w-24" },
+      headerLabel: "Assigned",
+      className: "w-[220px] min-w-[150px]",
+    },
+    cell: ({ row, table }) => {
+      const meta = table.options.meta;
 
       return (
-        <AssignedUser
-          fullName={row.original.assigned?.fullName}
-          avatarUrl={row.original.assigned?.avatarUrl}
+        <InlineAssignUser
+          selectedId={row.original.assigned?.id ?? undefined}
+          onSelect={(user) => {
+            meta?.updateTransaction?.({
+              id: row.original.id,
+              assignedId: user.id,
+            });
+          }}
         />
       );
     },
   },
   {
     accessorKey: "status",
-    cell: ({ row }) => {
-      const fullfilled =
-        row.original.status === "completed" || row.original.isFulfilled;
-      const hasPendingSuggestion = row.original.hasPendingSuggestion;
+    header: "Status",
+    size: 160,
+    minSize: 120,
+    maxSize: 300,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "badge", width: "w-20" },
+      headerLabel: "Status",
+      className: "w-[160px] min-w-[120px]",
+    },
+    cell: ({ row, table }) => {
+      const meta = table.options.meta;
+
+      // Show exporting state when transaction is being exported
+      if (meta?.exportingTransactionIds?.includes(row.original.id)) {
+        return (
+          <div className="flex items-center space-x-2">
+            <Spinner size={14} className="stroke-primary" />
+            <span className="text-[#878787] text-sm">Exporting</span>
+          </div>
+        );
+      }
 
       return (
         <TransactionStatus
-          fullfilled={fullfilled}
-          hasPendingSuggestion={hasPendingSuggestion}
+          isFulfilled={
+            row.original.status === "completed" || row.original.isFulfilled
+          }
+          isExported={row.original.isExported ?? false}
+          hasExportError={row.original.hasExportError}
+          exportErrorCode={row.original.exportErrorCode}
+          exportProvider={row.original.exportProvider}
+          exportedAt={row.original.exportedAt}
+          hasPendingSuggestion={row.original.hasPendingSuggestion}
         />
       );
     },
   },
   {
     id: "actions",
+    size: 100,
+    minSize: 100,
+    maxSize: 100,
+    enableResizing: false,
     enableSorting: false,
     enableHiding: false,
     meta: {
+      sticky: true,
+      skeleton: { type: "icon" },
+      headerLabel: "Actions",
       className:
-        "text-right md:sticky md:right-0 bg-background group-hover:bg-[#F2F1EF] group-hover:dark:bg-secondary z-10 before:absolute before:left-0 before:top-0 before:bottom-0 before:w-px before:bg-border after:absolute after:left-[-24px] after:top-0 after:bottom-0 after:w-6 after:bg-gradient-to-r after:from-transparent after:to-background group-hover:after:to-muted after:z-[-1]",
+        "w-[100px] min-w-[100px] md:sticky md:right-0 bg-background group-hover:bg-[#F2F1EF] group-hover:dark:bg-[#0f0f0f] z-10 justify-center !border-l !border-border",
     },
     cell: ({ row, table }) => {
       const meta = table.options.meta;
@@ -409,6 +634,8 @@ export const columns: ColumnDef<Transaction>[] = [
           onCopyUrl={meta?.copyUrl}
           onUpdateTransaction={meta?.updateTransaction}
           onDeleteTransaction={meta?.onDeleteTransaction}
+          onEditTransaction={meta?.editTransaction}
+          onMoveToReview={meta?.moveToReview}
         />
       );
     },

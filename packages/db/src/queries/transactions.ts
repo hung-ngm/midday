@@ -1,5 +1,6 @@
 import type { Database } from "@db/client";
 import {
+  accountingSyncRecords,
   bankAccounts,
   bankConnections,
   inbox,
@@ -13,8 +14,13 @@ import {
   transactions,
   users,
 } from "@db/schema";
+import {
+  CONTRA_REVENUE_CATEGORIES,
+  REVENUE_CATEGORIES,
+} from "@midday/categories";
 import { buildSearchQuery } from "@midday/db/utils/search-query";
-import { logger } from "@midday/logger";
+import { createLoggerWithContext } from "@midday/logger";
+import { resolveTaxValues } from "@midday/utils/tax";
 import {
   and,
   asc,
@@ -28,6 +34,7 @@ import {
   lt,
   lte,
   ne,
+  not,
   or,
   sql,
 } from "drizzle-orm";
@@ -35,6 +42,8 @@ import type { SQL } from "drizzle-orm/sql/sql";
 import { nanoid } from "nanoid";
 import { createActivity } from "./activities";
 import { type Attachment, createAttachments } from "./transaction-attachments";
+
+const logger = createLoggerWithContext("transactions");
 
 export type GetTransactionsParams = {
   teamId: string;
@@ -52,8 +61,13 @@ export type GetTransactionsParams = {
   start?: string | null;
   end?: string | null;
   recurring?: string[] | null;
-  amount_range?: number[] | null;
+  amountRange?: number[] | null;
   amount?: string[] | null;
+  manual?: "include" | "exclude" | null;
+  /** Filter by export status: true = only exported, false = only NOT exported, undefined = no filter */
+  exported?: boolean | null;
+  /** Filter by fulfillment: true = ready for review (has attachments OR status=completed), false = not ready */
+  fulfilled?: boolean | null;
 };
 
 // Helper type from schema if not already exported
@@ -82,7 +96,10 @@ export async function getTransactions(
     assignees: filterAssignees,
     recurring: filterRecurring,
     amount: filterAmount,
-    amount_range: filterAmountRange,
+    amountRange: filterAmountRange,
+    manual: filterManual,
+    exported,
+    fulfilled,
   } = params;
 
   // Always start with teamId filter
@@ -129,23 +146,96 @@ export async function getTransactions(
     whereConditions.push(eq(transactions.status, "excluded"));
   } else if (statuses?.includes("archived")) {
     whereConditions.push(eq(transactions.status, "archived"));
-  } else {
-    // Default: pending, posted, or completed
+  } else if (statuses?.includes("exported")) {
+    // Show all exported transactions: manually marked OR synced to accounting provider
     whereConditions.push(
-      inArray(transactions.status, ["pending", "posted", "completed"]),
+      sql`(
+        ${transactions.status} = 'exported' OR EXISTS (
+          SELECT 1 FROM ${accountingSyncRecords}
+          WHERE ${accountingSyncRecords.transactionId} = ${transactions.id}
+          AND ${accountingSyncRecords.teamId} = ${teamId}
+          AND ${accountingSyncRecords.status} = 'synced'
+        )
+      )`,
+    );
+  } else {
+    // Default: pending, posted, completed, or exported (exclude archived/excluded)
+    whereConditions.push(
+      inArray(transactions.status, [
+        "pending",
+        "posted",
+        "completed",
+        "exported",
+      ]),
     );
   }
 
-  // Categories filter
+  // Categories filter with child category expansion
   if (filterCategories && filterCategories.length > 0) {
-    const categoryConditions: (SQL | undefined)[] = [];
-    for (const categorySlug of filterCategories) {
-      if (categorySlug === "uncategorized") {
-        categoryConditions.push(isNull(transactions.categorySlug));
-      } else {
-        categoryConditions.push(eq(transactions.categorySlug, categorySlug));
+    const categorySlugs = filterCategories.filter(
+      (slug) => slug !== "uncategorized",
+    );
+
+    const expandedSlugs = new Set<string>(categorySlugs);
+
+    // Only query if we have category slugs (not just "uncategorized")
+    if (categorySlugs.length > 0) {
+      // Query categories to identify parents and get their IDs
+      const categories = await db
+        .select({
+          slug: transactionCategories.slug,
+          id: transactionCategories.id,
+          parentId: transactionCategories.parentId,
+        })
+        .from(transactionCategories)
+        .where(
+          and(
+            eq(transactionCategories.teamId, teamId),
+            inArray(transactionCategories.slug, categorySlugs),
+          ),
+        );
+
+      // Find parent category IDs (categories with no parentId)
+      const parentCategoryIds = categories
+        .filter((cat) => !cat.parentId)
+        .map((cat) => cat.id);
+
+      // Get all child category slugs for parent categories
+      if (parentCategoryIds.length > 0) {
+        const childCategories = await db
+          .select({ slug: transactionCategories.slug })
+          .from(transactionCategories)
+          .where(
+            and(
+              eq(transactionCategories.teamId, teamId),
+              inArray(transactionCategories.parentId, parentCategoryIds),
+            ),
+          );
+
+        // Add child slugs to the set (automatic deduplication)
+        for (const child of childCategories) {
+          if (child.slug) {
+            expandedSlugs.add(child.slug);
+          }
+        }
       }
     }
+
+    // Build filter conditions
+    const categoryConditions: (SQL | undefined)[] = [];
+
+    // Handle uncategorized separately
+    if (filterCategories.includes("uncategorized")) {
+      categoryConditions.push(isNull(transactions.categorySlug));
+    }
+
+    // Handle category slugs (now includes children, deduplicated)
+    if (expandedSlugs.size > 0) {
+      categoryConditions.push(
+        inArray(transactions.categorySlug, Array.from(expandedSlugs)),
+      );
+    }
+
     const definedCategoryConditions = categoryConditions.filter(
       (c) => c !== undefined,
     ) as SQL[];
@@ -189,7 +279,12 @@ export async function getTransactions(
     whereConditions.push(lt(transactions.amount, 0));
     whereConditions.push(ne(transactions.categorySlug, "transfer"));
   } else if (type === "income") {
-    whereConditions.push(eq(transactions.categorySlug, "income"));
+    whereConditions.push(
+      inArray(transactions.categorySlug, REVENUE_CATEGORIES),
+    );
+    whereConditions.push(
+      not(inArray(transactions.categorySlug, CONTRA_REVENUE_CATEGORIES)),
+    );
   }
 
   // Accounts filter
@@ -216,15 +311,25 @@ export async function getTransactions(
   if (
     filterAmountRange &&
     filterAmountRange.length === 2 &&
-    typeof filterAmountRange[0] === "number" &&
-    typeof filterAmountRange[1] === "number"
+    filterAmountRange[0] != null &&
+    filterAmountRange[1] != null
   ) {
-    whereConditions.push(
-      gte(transactions.amount, Number(filterAmountRange[0])),
-    );
-    whereConditions.push(
-      lte(transactions.amount, Number(filterAmountRange[1])),
-    );
+    let minAmount = Number(filterAmountRange[0]);
+    let maxAmount = Number(filterAmountRange[1]);
+    if (!Number.isNaN(minAmount) && !Number.isNaN(maxAmount)) {
+      // Ensure min <= max
+      if (minAmount > maxAmount) {
+        [minAmount, maxAmount] = [maxAmount, minAmount];
+      }
+
+      // Use COALESCE to handle multi-currency transactions
+      whereConditions.push(
+        sql`COALESCE(${transactions.baseAmount}, ${transactions.amount}) >= ${minAmount}`,
+      );
+      whereConditions.push(
+        sql`COALESCE(${transactions.baseAmount}, ${transactions.amount}) <= ${maxAmount}`,
+      );
+    }
   }
 
   // Specific amount filter (gte/lte)
@@ -235,6 +340,54 @@ export async function getTransactions(
     } else if (operator === "lte") {
       whereConditions.push(lte(transactions.amount, Number(value)));
     }
+  }
+
+  // Manual filter
+  if (filterManual === "include") {
+    whereConditions.push(eq(transactions.manual, true));
+  } else if (filterManual === "exclude") {
+    whereConditions.push(eq(transactions.manual, false));
+  }
+
+  // Exported filter: true = only exported, false = only NOT exported
+  // A transaction is considered exported if status = 'exported' OR has a synced accounting record
+  if (exported === true) {
+    // Only exported transactions
+    whereConditions.push(
+      sql`(
+        ${transactions.status} = 'exported' OR EXISTS (
+          SELECT 1 FROM ${accountingSyncRecords}
+          WHERE ${accountingSyncRecords.transactionId} = ${transactions.id}
+          AND ${accountingSyncRecords.teamId} = ${teamId}
+          AND ${accountingSyncRecords.status} = 'synced'
+        )
+      )`,
+    );
+  } else if (exported === false) {
+    // Only NOT exported transactions (not synced to accounting)
+    // Also exclude 'excluded' and 'archived' to match getTransactionsReadyForExportCount
+    // Include 'exported' in exclusion list to maintain mutual exclusivity with exported === true
+    whereConditions.push(
+      sql`(
+        ${transactions.status} NOT IN ('exported', 'excluded', 'archived') AND NOT EXISTS (
+          SELECT 1 FROM ${accountingSyncRecords}
+          WHERE ${accountingSyncRecords.transactionId} = ${transactions.id}
+          AND ${accountingSyncRecords.teamId} = ${teamId}
+          AND ${accountingSyncRecords.status} = 'synced'
+        )
+      )`,
+    );
+  }
+
+  // Fulfilled filter: true = has attachments OR status=completed, false = no attachments AND status!=completed
+  if (fulfilled === true) {
+    whereConditions.push(
+      sql`(EXISTS (SELECT 1 FROM ${transactionAttachments} WHERE ${eq(transactionAttachments.transactionId, transactions.id)} AND ${eq(transactionAttachments.teamId, teamId)}) OR ${transactions.status} = 'completed')`,
+    );
+  } else if (fulfilled === false) {
+    whereConditions.push(
+      sql`NOT (EXISTS (SELECT 1 FROM ${transactionAttachments} WHERE ${eq(transactionAttachments.transactionId, transactions.id)} AND ${eq(transactionAttachments.teamId, teamId)}) OR ${transactions.status} = 'completed')`,
+    );
   }
 
   const finalWhereConditions = whereConditions.filter(
@@ -261,6 +414,7 @@ export async function getTransactions(
       createdAt: transactions.createdAt,
       taxRate: transactions.taxRate,
       taxType: transactions.taxType,
+      taxAmount: transactions.taxAmount,
       enrichmentCompleted: transactions.enrichmentCompleted,
       isFulfilled:
         sql<boolean>`(EXISTS (SELECT 1 FROM ${transactionAttachments} WHERE ${eq(transactionAttachments.transactionId, transactions.id)} AND ${eq(transactionAttachments.teamId, teamId)}) OR ${transactions.status} = 'completed')`.as(
@@ -272,6 +426,44 @@ export async function getTransactions(
           AND tms.team_id = ${teamId} 
           AND tms.status = 'pending'
         )`.as("hasPendingSuggestion"),
+      isExported: sql<boolean>`(
+          ${transactions.status} = 'exported' OR EXISTS (
+            SELECT 1 FROM ${accountingSyncRecords}
+            WHERE ${accountingSyncRecords.transactionId} = ${transactions.id}
+            AND ${accountingSyncRecords.teamId} = ${teamId}
+            AND ${accountingSyncRecords.status} = 'synced'
+          )
+        )`.as("isExported"),
+      exportProvider: sql<string | null>`(
+          SELECT ${accountingSyncRecords.provider}
+          FROM ${accountingSyncRecords}
+          WHERE ${accountingSyncRecords.transactionId} = ${transactions.id}
+          AND ${accountingSyncRecords.teamId} = ${teamId}
+          AND ${accountingSyncRecords.status} = 'synced'
+          LIMIT 1
+        )`.as("exportProvider"),
+      exportedAt: sql<string | null>`(
+          SELECT ${accountingSyncRecords.syncedAt}
+          FROM ${accountingSyncRecords}
+          WHERE ${accountingSyncRecords.transactionId} = ${transactions.id}
+          AND ${accountingSyncRecords.teamId} = ${teamId}
+          AND ${accountingSyncRecords.status} = 'synced'
+          LIMIT 1
+        )`.as("exportedAt"),
+      hasExportError: sql<boolean>`EXISTS (
+          SELECT 1 FROM ${accountingSyncRecords}
+          WHERE ${accountingSyncRecords.transactionId} = ${transactions.id}
+          AND ${accountingSyncRecords.teamId} = ${teamId}
+          AND ${accountingSyncRecords.status} IN ('failed', 'partial')
+        )`.as("hasExportError"),
+      exportErrorCode: sql<string | null>`(
+          SELECT ${accountingSyncRecords.errorCode}
+          FROM ${accountingSyncRecords}
+          WHERE ${accountingSyncRecords.transactionId} = ${transactions.id}
+          AND ${accountingSyncRecords.teamId} = ${teamId}
+          AND ${accountingSyncRecords.status} IN ('failed', 'partial')
+          LIMIT 1
+        )`.as("exportErrorCode"),
       attachments: sql<
         Array<{
           id: string;
@@ -459,16 +651,21 @@ export async function getTransactions(
         : null,
     };
 
-    const taxRate = rest.taxRate ?? rest.category?.taxRate ?? 0;
+    const { taxAmount, taxRate, taxType } = resolveTaxValues({
+      transactionAmount: rest.amount,
+      transactionTaxAmount: rest.taxAmount,
+      transactionTaxRate: rest.taxRate,
+      transactionTaxType: rest.taxType,
+      categoryTaxRate: rest.category?.taxRate,
+      categoryTaxType: rest.category?.taxType,
+    });
 
     return {
       ...rest,
       account: newAccount,
       taxRate,
-      taxType: rest.taxType ?? rest.category?.taxType ?? null,
-      taxAmount: Math.abs(
-        +((taxRate * rest.amount) / (100 + taxRate)).toFixed(2),
-      ),
+      taxType,
+      taxAmount,
     };
   });
 
@@ -510,6 +707,7 @@ export async function getTransactionById(
       createdAt: transactions.createdAt,
       taxRate: transactions.taxRate,
       taxType: transactions.taxType,
+      taxAmount: transactions.taxAmount,
       enrichmentCompleted: transactions.enrichmentCompleted,
       isFulfilled:
         sql<boolean>`(EXISTS (SELECT 1 FROM ${transactionAttachments} WHERE ${eq(transactionAttachments.transactionId, transactions.id)} AND ${eq(transactionAttachments.teamId, params.teamId)})) OR ${transactions.status} = 'completed'`.as(
@@ -688,16 +886,21 @@ export async function getTransactionById(
       }
     : null;
 
-  const taxRate = rest.taxRate ?? rest.category?.taxRate ?? 0;
+  const { taxAmount, taxRate, taxType } = resolveTaxValues({
+    transactionAmount: rest.amount,
+    transactionTaxAmount: rest.taxAmount,
+    transactionTaxRate: rest.taxRate,
+    transactionTaxType: rest.taxType,
+    categoryTaxRate: rest.category?.taxRate,
+    categoryTaxType: rest.category?.taxType,
+  });
 
   return {
     ...rest,
     account: newAccount,
     taxRate,
-    taxType: rest.taxType ?? rest.category?.taxType ?? null,
-    taxAmount: Math.abs(
-      +((taxRate * rest.amount) / (100 + taxRate)).toFixed(2),
-    ),
+    taxType,
+    taxAmount,
   };
 }
 
@@ -737,9 +940,21 @@ export async function getTransactionsAmountFullRangeData(
   db: Database,
   teamId: string,
 ) {
-  return db.executeOnReplica(
-    sql`select * from get_transactions_amount_full_range_data(${teamId})`,
-  );
+  // Use COALESCE(baseAmount, amount) to match the backend filter logic
+  // This ensures the frontend count matches the actual filtered results
+  return db
+    .select({
+      amount: sql<number>`COALESCE(${transactions.baseAmount}, ${transactions.amount})`,
+      currency: sql<string>`COALESCE(${transactions.baseCurrency}, ${transactions.currency})`,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.teamId, teamId),
+        eq(transactions.internal, false),
+        ne(transactions.status, "excluded"),
+      ),
+    );
 }
 
 type GetSimilarTransactionsParams = {
@@ -772,8 +987,7 @@ export async function getSimilarTransactions(
     minSimilarityScore = 0.9,
   } = params;
 
-  logger.info({
-    msg: "Starting hybrid search for similar transactions",
+  logger.info("Starting hybrid search for similar transactions", {
     name,
     teamId,
     minSimilarityScore,
@@ -813,7 +1027,7 @@ export async function getSimilarTransactions(
         const sourceText = sourceEmbedding[0]!.sourceText;
         embeddingSourceText = sourceText; // Store for FTS search
 
-        logger.info("✅ Found embedding for transaction", {
+        logger.info("Found embedding for transaction", {
           transactionId,
           sourceText,
           embeddingExists: true,
@@ -871,7 +1085,7 @@ export async function getSimilarTransactions(
         });
       } else {
         logger.warn(
-          "❌ No embedding found for transaction - will rely on FTS only",
+          "No embedding found for transaction - will rely on FTS only",
           {
             transactionId,
             teamId,
@@ -910,8 +1124,7 @@ export async function getSimilarTransactions(
     sql`to_tsquery('english', ${searchQuery}) @@ ${transactions.ftsVector}`,
   );
 
-  logger.info({
-    msg: "FTS search using term",
+  logger.info("FTS search using term", {
     searchTerm,
     searchQuery,
     usingEmbeddingSourceText: false, // Always false now - we use original name
@@ -944,8 +1157,7 @@ export async function getSimilarTransactions(
     (c) => c !== undefined,
   ) as SQL[];
 
-  logger.info({
-    msg: "FTS search conditions",
+  logger.info("FTS search conditions", {
     searchTerm,
     searchQuery,
     conditionsCount: finalFtsConditions.length,
@@ -969,8 +1181,7 @@ export async function getSimilarTransactions(
     .from(transactions)
     .where(and(...finalFtsConditions)); // No limit - get all FTS matches
 
-  logger.info({
-    msg: "FTS search completed",
+  logger.info("FTS search completed", {
     resultsFound: ftsResults.length,
     searchTerm,
     searchQuery,
@@ -1246,13 +1457,28 @@ type UpdateTransactionData = {
   id: string;
   teamId: string;
   userId?: string;
+  name?: string;
+  amount?: number;
+  currency?: string;
+  date?: string;
+  bankAccountId?: string;
   categorySlug?: string | null;
-  status?: "pending" | "archived" | "completed" | "posted" | "excluded" | null;
+  status?:
+    | "pending"
+    | "archived"
+    | "completed"
+    | "posted"
+    | "excluded"
+    | "exported"
+    | null;
   internal?: boolean;
   note?: string | null;
   assignedId?: string | null;
   recurring?: boolean;
   frequency?: "weekly" | "monthly" | "annually" | "irregular" | null;
+  taxRate?: number | null;
+  taxAmount?: number | null;
+  taxType?: string | null;
 };
 
 export async function updateTransaction(
@@ -1260,6 +1486,13 @@ export async function updateTransaction(
   params: UpdateTransactionData,
 ) {
   const { id, teamId, userId, ...dataToUpdate } = params;
+
+  // If category is being changed, clear tax fields so category's tax rate is used
+  if (dataToUpdate.categorySlug !== undefined) {
+    dataToUpdate.taxRate = null;
+    dataToUpdate.taxAmount = null;
+    dataToUpdate.taxType = null;
+  }
 
   const [result] = await db
     .update(transactions)
@@ -1306,18 +1539,141 @@ export async function updateTransaction(
   return getFullTransactionData(db, result.id, teamId);
 }
 
+export type GetTransactionsByIdsParams = {
+  ids: string[];
+  teamId: string;
+};
+
+export async function getTransactionsByIds(
+  db: Database,
+  params: GetTransactionsByIdsParams,
+) {
+  const { ids, teamId } = params;
+
+  if (ids.length === 0) {
+    return [];
+  }
+
+  // Return snake_case structure to match Supabase REST API response format
+  const results = await db
+    .select({
+      id: transactions.id,
+      date: transactions.date,
+      name: transactions.name,
+      description: transactions.description,
+      amount: transactions.amount,
+      note: transactions.note,
+      balance: transactions.balance,
+      currency: transactions.currency,
+      counterparty_name: transactions.counterpartyName,
+      tax_type: transactions.taxType,
+      tax_rate: transactions.taxRate,
+      tax_amount: transactions.taxAmount,
+      status: transactions.status,
+      attachments: sql<
+        Array<{
+          id: string;
+          name: string | null;
+          path: string[] | null;
+          type: string | null;
+          size: number | null;
+        }>
+      >`COALESCE(json_agg(DISTINCT jsonb_build_object('id', ${transactionAttachments.id}, 'name', ${transactionAttachments.name}, 'path', ${transactionAttachments.path}, 'type', ${transactionAttachments.type}, 'size', ${transactionAttachments.size})) FILTER (WHERE ${transactionAttachments.id} IS NOT NULL), '[]'::json)`.as(
+        "attachments",
+      ),
+      category: sql<{
+        id: string;
+        name: string | null;
+        description: string | null;
+        tax_rate: number | null;
+        tax_type: string | null;
+        tax_reporting_code: string | null;
+      } | null>`json_build_object('id', ${transactionCategories.id}, 'name', ${transactionCategories.name}, 'description', ${transactionCategories.description}, 'tax_rate', ${transactionCategories.taxRate}, 'tax_type', ${transactionCategories.taxType}, 'tax_reporting_code', ${transactionCategories.taxReportingCode})`.as(
+        "category",
+      ),
+      bank_account: sql<{
+        id: string;
+        name: string | null;
+      } | null>`json_build_object('id', ${bankAccounts.id}, 'name', ${bankAccounts.name})`.as(
+        "bank_account",
+      ),
+      tags: sql<
+        Array<{ id: string; tag: { id: string; name: string | null } }>
+      >`COALESCE(json_agg(DISTINCT jsonb_build_object('id', ${transactionTags.id}, 'tag', jsonb_build_object('id', ${tags.id}, 'name', ${tags.name}))) FILTER (WHERE ${transactionTags.id} IS NOT NULL), '[]'::json)`.as(
+        "tags",
+      ),
+    })
+    .from(transactions)
+    .leftJoin(
+      transactionCategories,
+      and(
+        eq(transactions.categorySlug, transactionCategories.slug),
+        eq(transactionCategories.teamId, teamId),
+      ),
+    )
+    .leftJoin(
+      bankAccounts,
+      and(
+        eq(transactions.bankAccountId, bankAccounts.id),
+        eq(bankAccounts.teamId, teamId),
+      ),
+    )
+    .leftJoin(
+      transactionTags,
+      and(
+        eq(transactionTags.transactionId, transactions.id),
+        eq(transactionTags.teamId, teamId),
+      ),
+    )
+    .leftJoin(
+      tags,
+      and(eq(tags.id, transactionTags.tagId), eq(tags.teamId, teamId)),
+    )
+    .leftJoin(
+      transactionAttachments,
+      and(
+        eq(transactionAttachments.transactionId, transactions.id),
+        eq(transactionAttachments.teamId, teamId),
+      ),
+    )
+    .where(and(inArray(transactions.id, ids), eq(transactions.teamId, teamId)))
+    .groupBy(
+      transactions.id,
+      transactionCategories.id,
+      transactionCategories.name,
+      transactionCategories.description,
+      transactionCategories.taxRate,
+      transactionCategories.taxType,
+      transactionCategories.taxReportingCode,
+      bankAccounts.id,
+      bankAccounts.name,
+    );
+
+  return results;
+}
+
 type UpdateTransactionsData = {
   ids: string[];
   teamId: string;
   userId?: string;
   categorySlug?: string | null;
-  status?: "pending" | "archived" | "completed" | "posted" | "excluded" | null;
+  status?:
+    | "pending"
+    | "archived"
+    | "completed"
+    | "posted"
+    | "excluded"
+    | "exported"
+    | null;
   internal?: boolean;
   note?: string | null;
   assignedId?: string | null;
   tagId?: string | null;
   recurring?: boolean;
   frequency?: "weekly" | "monthly" | "annually" | "irregular" | null;
+  taxRate?: number | null;
+  taxAmount?: number | null;
+  taxType?: string | null;
 };
 
 export async function updateTransactions(
@@ -1325,6 +1681,13 @@ export async function updateTransactions(
   data: UpdateTransactionsData,
 ) {
   const { ids, tagId, teamId, userId, ...input } = data;
+
+  // If category is being changed, clear tax fields so category's tax rate is used
+  if (input.categorySlug !== undefined) {
+    input.taxRate = null;
+    input.taxAmount = null;
+    input.taxType = null;
+  }
 
   if (tagId) {
     await db
@@ -1498,4 +1861,316 @@ export async function createTransactions(
 
   // Filter out any null results
   return fullTransactions.filter((transaction) => transaction !== null);
+}
+
+export type UpsertTransactionData = {
+  name: string;
+  date: string;
+  method: "other" | "card_purchase" | "transfer";
+  amount: number;
+  currency: string;
+  teamId: string;
+  bankAccountId: string | null;
+  internalId: string;
+  status: "pending" | "completed" | "archived" | "posted" | "excluded";
+  manual: boolean;
+  categorySlug?: string | null;
+  description?: string | null;
+  balance?: number | null;
+  note?: string | null;
+  counterpartyName?: string | null;
+  merchantName?: string | null;
+  assignedId?: string | null;
+  internal?: boolean;
+  notified?: boolean;
+  baseAmount?: number | null;
+  baseCurrency?: string | null;
+  taxAmount?: number | null;
+  taxRate?: number | null;
+  taxType?: string | null;
+  recurring?: boolean;
+  frequency?:
+    | "weekly"
+    | "biweekly"
+    | "monthly"
+    | "semi_monthly"
+    | "annually"
+    | "irregular"
+    | "unknown"
+    | null;
+  enrichmentCompleted?: boolean;
+};
+
+export type UpsertTransactionsParams = {
+  transactions: UpsertTransactionData[];
+  teamId: string;
+};
+
+/**
+ * Bulk upsert transactions with conflict handling on internalId
+ * Used by import-transactions and update-account-base-currency processors
+ */
+export async function upsertTransactions(
+  db: Database,
+  params: UpsertTransactionsParams,
+): Promise<Array<{ id: string }>> {
+  const { transactions: transactionsData, teamId } = params;
+
+  const upserted = await db
+    .insert(transactions)
+    .values(transactionsData)
+    .onConflictDoUpdate({
+      target: [transactions.internalId],
+      set: {
+        // Update all fields except id and createdAt
+        name: sql`excluded.name`,
+        amount: sql`excluded.amount`,
+        currency: sql`excluded.currency`,
+        date: sql`excluded.date`,
+        description: sql`excluded.description`,
+        method: sql`excluded.method`,
+        status: sql`excluded.status`,
+        balance: sql`excluded.balance`,
+        note: sql`excluded.note`,
+        categorySlug: sql`excluded.category_slug`,
+        counterpartyName: sql`excluded.counterparty_name`,
+        merchantName: sql`excluded.merchant_name`,
+        bankAccountId: sql`excluded.bank_account_id`,
+        assignedId: sql`excluded.assigned_id`,
+        internal: sql`excluded.internal`,
+        notified: sql`excluded.notified`,
+        manual: sql`excluded.manual`,
+        baseAmount: sql`excluded.base_amount`,
+        baseCurrency: sql`excluded.base_currency`,
+        taxAmount: sql`excluded.tax_amount`,
+        taxRate: sql`excluded.tax_rate`,
+        taxType: sql`excluded.tax_type`,
+        recurring: sql`excluded.recurring`,
+        frequency: sql`excluded.frequency`,
+        enrichmentCompleted: sql`excluded.enrichment_completed`,
+      },
+    })
+    .returning({
+      id: transactions.id,
+    });
+
+  return upserted;
+}
+
+export type GetTransactionsByAccountIdParams = {
+  accountId: string;
+  teamId: string;
+};
+
+/**
+ * Get all transactions for a specific account
+ * Used by update-account-base-currency processor
+ */
+export async function getTransactionsByAccountId(
+  db: Database,
+  params: GetTransactionsByAccountIdParams,
+) {
+  const { accountId, teamId } = params;
+
+  return db
+    .select()
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.bankAccountId, accountId),
+        eq(transactions.teamId, teamId),
+      ),
+    );
+}
+
+export type BulkUpdateTransactionsBaseCurrencyParams = {
+  transactions: Array<{
+    id: string;
+    baseAmount: number;
+    baseCurrency: string;
+  }>;
+  teamId: string;
+};
+
+/**
+ * Bulk update transactions with base currency/amount
+ * Uses batch processing internally for large datasets
+ */
+export async function bulkUpdateTransactionsBaseCurrency(
+  db: Database,
+  params: BulkUpdateTransactionsBaseCurrencyParams,
+) {
+  const { transactions: transactionsData, teamId } = params;
+  const BATCH_LIMIT = 500;
+
+  // Process in batches
+  for (let i = 0; i < transactionsData.length; i += BATCH_LIMIT) {
+    const batch = transactionsData.slice(i, i + BATCH_LIMIT);
+
+    // Get existing transactions to preserve all fields
+    const transactionIds = batch.map((tx) => tx.id);
+    const existingTransactions = await db
+      .select()
+      .from(transactions)
+      .where(
+        and(
+          inArray(transactions.id, transactionIds),
+          eq(transactions.teamId, teamId),
+        ),
+      );
+
+    // Create upsert data preserving all existing fields, updating only baseAmount and baseCurrency
+    const upsertData: UpsertTransactionData[] = existingTransactions.map(
+      (tx) => {
+        const update = batch.find((b) => b.id === tx.id);
+        return {
+          name: tx.name,
+          date: tx.date,
+          method: tx.method as "other" | "card_purchase" | "transfer",
+          amount: Number(tx.amount),
+          currency: tx.currency ?? "",
+          teamId: tx.teamId,
+          bankAccountId: tx.bankAccountId ?? null,
+          internalId: tx.internalId ?? "",
+          status: (tx.status ?? "posted") as
+            | "pending"
+            | "completed"
+            | "archived"
+            | "posted"
+            | "excluded",
+          manual: tx.manual ?? false,
+          categorySlug: tx.categorySlug,
+          description: tx.description,
+          balance: tx.balance ? Number(tx.balance) : null,
+          note: tx.note,
+          counterpartyName: tx.counterpartyName,
+          merchantName: tx.merchantName,
+          assignedId: tx.assignedId,
+          internal: tx.internal ?? false,
+          notified: tx.notified ?? false,
+          baseAmount:
+            update?.baseAmount ??
+            (tx.baseAmount ? Number(tx.baseAmount) : null),
+          baseCurrency: update?.baseCurrency ?? tx.baseCurrency ?? null,
+          taxAmount: tx.taxAmount ? Number(tx.taxAmount) : null,
+          taxRate: tx.taxRate ? Number(tx.taxRate) : null,
+          taxType: tx.taxType,
+          recurring: tx.recurring ?? false,
+          frequency: tx.frequency as
+            | "weekly"
+            | "biweekly"
+            | "monthly"
+            | "semi_monthly"
+            | "annually"
+            | "irregular"
+            | "unknown"
+            | null,
+          enrichmentCompleted: tx.enrichmentCompleted ?? false,
+        };
+      },
+    );
+
+    await upsertTransactions(db, {
+      transactions: upsertData,
+      teamId,
+    });
+  }
+}
+
+/**
+ * Count transactions that are ready for export to accounting software
+ *
+ * Ready for export means:
+ * - Fulfilled (has attachments OR status = 'completed')
+ * - Not excluded or archived
+ * - Not already synced to any accounting provider with status 'synced'
+ */
+export async function getTransactionsReadyForExportCount(
+  db: Database,
+  teamId: string,
+): Promise<number> {
+  const result = await db
+    .select({
+      count: sql<number>`COUNT(DISTINCT ${transactions.id})`.as("count"),
+    })
+    .from(transactions)
+    .leftJoin(
+      transactionAttachments,
+      and(
+        eq(transactionAttachments.transactionId, transactions.id),
+        eq(transactionAttachments.teamId, teamId),
+      ),
+    )
+    .leftJoin(
+      accountingSyncRecords,
+      and(
+        eq(accountingSyncRecords.transactionId, transactions.id),
+        eq(accountingSyncRecords.teamId, teamId),
+        eq(accountingSyncRecords.status, "synced"),
+      ),
+    )
+    .where(
+      and(
+        eq(transactions.teamId, teamId),
+        // Not exported, excluded, or archived
+        sql`${transactions.status} NOT IN ('exported', 'excluded', 'archived')`,
+        // Not already synced
+        isNull(accountingSyncRecords.id),
+      ),
+    )
+    .groupBy(transactions.id)
+    // Fulfilled: has attachments OR status = 'completed'
+    .having(
+      sql`(COUNT(${transactionAttachments.id}) > 0 OR ${transactions.status} = 'completed')`,
+    );
+
+  // The query returns one row per fulfilled transaction, so we count the rows
+  return result.length;
+}
+
+/**
+ * Mark transactions as exported (for file exports)
+ * This removes them from the review tab
+ */
+export async function markTransactionsAsExported(
+  db: Database,
+  transactionIds: string[],
+): Promise<void> {
+  if (transactionIds.length === 0) return;
+
+  await db
+    .update(transactions)
+    .set({ status: "exported" })
+    .where(inArray(transactions.id, transactionIds));
+}
+
+/**
+ * Move a transaction back to review by resetting its export status
+ * This handles both file exports (status = 'exported') and accounting exports (sync records)
+ */
+export async function moveTransactionToReview(
+  db: Database,
+  params: { transactionId: string; teamId: string },
+): Promise<void> {
+  // Reset status if it's 'exported' (file export)
+  await db
+    .update(transactions)
+    .set({ status: "posted" })
+    .where(
+      and(
+        eq(transactions.id, params.transactionId),
+        eq(transactions.teamId, params.teamId),
+        eq(transactions.status, "exported"),
+      ),
+    );
+
+  // Delete accounting sync records (accounting export)
+  await db
+    .delete(accountingSyncRecords)
+    .where(
+      and(
+        eq(accountingSyncRecords.transactionId, params.transactionId),
+        eq(accountingSyncRecords.teamId, params.teamId),
+      ),
+    );
 }

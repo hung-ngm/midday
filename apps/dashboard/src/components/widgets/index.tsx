@@ -1,74 +1,81 @@
 "use client";
 
-import { useTRPC } from "@/trpc/client";
-import {
-  Carousel,
-  CarouselContent,
-  CarouselItem,
-  CarouselNext,
-  CarouselPrevious,
-} from "@midday/ui/carousel";
-import { useQuery } from "@tanstack/react-query";
-import * as React from "react";
-import { AccountBalance } from "./account-balance";
-import { Assistant } from "./assistant";
-import { Inbox } from "./inbox";
-import { Invoice } from "./invoice";
-import { WidgetsNavigation } from "./navigation";
-import { Spending } from "./spending";
-import { Tracker } from "./tracker";
-import { Transactions } from "./transactions/transactions";
-import { Vault } from "./vault";
+import { useChatInterface } from "@/hooks/use-chat-interface";
+import { useOverviewTab } from "@/hooks/use-overview-tab";
+import type { AppRouter } from "@midday/api/trpc/routers/_app";
+import { cn } from "@midday/ui/cn";
+import { Skeleton } from "@midday/ui/skeleton";
+import { Tabs, TabsContent } from "@midday/ui/tabs";
+import type { inferRouterOutputs } from "@trpc/server";
+import { Suspense } from "react";
+import { MetricsView } from "../metrics/metrics-view";
+import { SuggestedActions } from "../suggested-actions";
+import { WidgetsHeader } from "./header";
+import { WidgetProvider, useIsCustomizing } from "./widget-provider";
+import { WidgetsGrid } from "./widgets-grid";
 
-export function Widgets() {
-  const trpc = useTRPC();
+type RouterOutputs = inferRouterOutputs<AppRouter>;
+type WidgetPreferences = RouterOutputs["widgets"]["getWidgetPreferences"];
 
-  const { data: accounts } = useQuery(
-    trpc.bankAccounts.get.queryOptions({
-      enabled: true,
-    }),
-  );
-
-  // If the user has not connected any accounts, disable the widgets
-  const disabled = !accounts?.length;
-
-  const items = [
-    <Assistant key="assistant" />,
-    <Spending disabled={disabled} key="spending" />,
-    <Invoice key="invoice" />,
-    <Transactions disabled={disabled} key="transactions" />,
-    <Tracker key="tracker" />,
-    <Inbox key="inbox" disabled={disabled} />,
-    <AccountBalance key="account-balance" />,
-    <Vault key="vault" />,
-  ];
+function SuggestedActionsSkeleton() {
+  const skeletonWidths = ["w-28", "w-32", "w-36", "w-28", "w-32", "w-28"];
 
   return (
-    <Carousel
-      className="flex flex-col"
-      opts={{
-        align: "start",
-        watchDrag: false,
-      }}
-    >
-      <WidgetsNavigation />
-      <div className="ml-auto hidden md:flex">
-        <CarouselPrevious className="static p-0 border-none hover:bg-transparent" />
-        <CarouselNext className="static p-0 border-none hover:bg-transparent" />
+    <div className="w-[calc(100%+16px)] md:w-full -mx-4 md:mx-0 md:px-6 mt-10 mb-8 flex items-center justify-center">
+      <div className="flex gap-3 overflow-x-auto scrollbar-hide w-full md:w-auto pl-4 md:pl-0">
+        {skeletonWidths.map((width) => (
+          <Skeleton
+            key={`suggested-actions-skeleton-${width}`}
+            className={`${width} h-[34px] border border-[#e6e6e6] dark:border-[#1d1d1d] flex-shrink-0`}
+          />
+        ))}
       </div>
+    </div>
+  );
+}
 
-      <CarouselContent className="-ml-[20px] 2xl:-ml-[40px] flex-col md:flex-row space-y-6 md:space-y-0">
-        {items.map((item, idx) => {
-          return (
-            <CarouselItem
-              className="lg:basis-1/2 xl:basis-1/3 3xl:basis-1/4 pl-[20px] 2xl:pl-[40px]"
-              key={idx.toString()}
-            >
-              {item}
-            </CarouselItem>
-          );
-        })}
-      </CarouselContent>
-    </Carousel>
+function WidgetsContent() {
+  const { isChatPage, isHome } = useChatInterface();
+  const isCustomizing = useIsCustomizing();
+  const { tab, setTab } = useOverviewTab();
+
+  if (isChatPage) {
+    return null;
+  }
+
+  return (
+    <Tabs value={tab} onValueChange={setTab}>
+      <div
+        className={cn(
+          "flex flex-col mt-6",
+          isHome && "widgets-container-spacing",
+        )}
+      >
+        <WidgetsHeader />
+        <TabsContent value="overview">
+          <WidgetsGrid />
+          {!isCustomizing && (
+            <Suspense fallback={<SuggestedActionsSkeleton />}>
+              <SuggestedActions />
+            </Suspense>
+          )}
+        </TabsContent>
+        <TabsContent value="metrics">
+          <MetricsView />
+        </TabsContent>
+      </div>
+    </Tabs>
+  );
+}
+
+interface WidgetsProps {
+  initialPreferences: WidgetPreferences;
+}
+
+export function Widgets({ initialPreferences }: WidgetsProps) {
+  return (
+    <WidgetProvider initialPreferences={initialPreferences}>
+      <WidgetsContent />
+    </WidgetProvider>
   );
 }

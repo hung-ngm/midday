@@ -6,12 +6,12 @@ import { InboxActions } from "@/components/inbox/inbox-actions";
 import { useInboxParams } from "@/hooks/use-inbox-params";
 import { useUserQuery } from "@/hooks/use-user";
 import { useTRPC } from "@/trpc/client";
-import { formatDate, getInitials } from "@/utils/format";
 import { getWebsiteLogo } from "@/utils/logos";
 import { Avatar, AvatarFallback, AvatarImageNext } from "@midday/ui/avatar";
 import { Separator } from "@midday/ui/separator";
 import { SheetHeader } from "@midday/ui/sheet";
 import { Skeleton } from "@midday/ui/skeleton";
+import { formatDate, getInitials } from "@midday/utils/format";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 export function InboxSheetDetails() {
@@ -121,7 +121,7 @@ export function InboxSheetDetails() {
           <div className="h-full flex items-center justify-center">
             <FileViewer
               mimeType={data.contentType}
-              url={`/api/proxy?filePath=vault/${data.filePath.join("/")}`}
+              url={`${process.env.NEXT_PUBLIC_API_URL}/files/proxy?filePath=vault/${data.filePath.join("/")}`}
               maxWidth={565}
             />
           </div>

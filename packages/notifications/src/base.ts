@@ -1,3 +1,5 @@
+import type { Database } from "@midday/db/client";
+import type { Activity } from "@midday/db/queries";
 import type { CreateEmailOptions } from "resend";
 import { z } from "zod";
 import type { CreateActivityInput } from "./schemas";
@@ -21,10 +23,34 @@ export interface NotificationHandler<T = any> {
     data: T,
     user: UserData,
     team: TeamContext,
-  ) => Partial<CreateEmailOptions> & {
+  ) => Partial<Omit<CreateEmailOptions, "template">> & {
     data: Record<string, any>;
     template?: string;
     emailType: "customer" | "team" | "owners"; // Explicit: customer emails go to external recipients, team emails go to all team members, owners emails go to team owners only
+  };
+  /**
+   * Optional: Define combining behavior for this notification type
+   * Allows multiple notifications of the same type to be combined into a single notification
+   */
+  combine?: {
+    /**
+     * Find an existing activity to combine with
+     * Should return null if no suitable activity is found
+     */
+    findExisting: (
+      db: Database,
+      data: T,
+      user: UserData,
+    ) => Promise<Activity | null>;
+    /**
+     * Merge metadata from new notification into existing activity
+     * Receives the metadata objects (not the full activity data) from both
+     * existing and incoming activities, and returns the merged metadata object
+     */
+    mergeMetadata: (
+      existing: Record<string, any>,
+      incoming: Record<string, any>,
+    ) => Record<string, any>;
   };
 }
 
@@ -43,7 +69,7 @@ export type EmailInput = {
   template?: string;
   user: UserData;
   data: Record<string, any>;
-} & Partial<CreateEmailOptions>;
+} & Partial<Omit<CreateEmailOptions, "template">>;
 
 // Use intersection type to combine our options with Resend's CreateEmailOptions
 export type NotificationOptions = {

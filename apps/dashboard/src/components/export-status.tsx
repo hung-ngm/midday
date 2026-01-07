@@ -1,6 +1,8 @@
 "use client";
 
-import { useExportStatus } from "@/hooks/use-export-status";
+import { useFileUrl } from "@/hooks/use-file-url";
+import { useJobStatus } from "@/hooks/use-job-status";
+import { useSuccessSound } from "@/hooks/use-success-sound";
 import { downloadFile } from "@/lib/download";
 import { useExportStore } from "@/store/export";
 import { useTRPC } from "@/trpc/client";
@@ -15,7 +17,7 @@ import { Icons } from "@midday/ui/icons";
 import { useToast } from "@midday/ui/use-toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { addDays, addYears } from "date-fns";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useCopyToClipboard } from "usehooks-ts";
 
 const options = [
@@ -38,21 +40,63 @@ type ShareOptions = {
   filePath: string;
 };
 
-type ExportData = {
-  runId?: string;
-  accessToken?: string;
+type ExportResult = {
+  filePath: string;
+  fullPath: string;
+  fileName: string;
+  totalItems: number;
 };
+
+function DownloadButton({
+  fullPath,
+  fileName,
+  onDownload,
+}: {
+  fullPath: string;
+  fileName: string;
+  onDownload: () => void;
+}) {
+  const { url: authenticatedUrl } = useFileUrl({
+    type: "download",
+    filePath: fullPath,
+    filename: fileName,
+  });
+
+  return (
+    <Button
+      size="sm"
+      onClick={() => {
+        if (authenticatedUrl && fileName) {
+          downloadFile(authenticatedUrl, fileName);
+        }
+        onDownload();
+      }}
+      disabled={!authenticatedUrl}
+    >
+      Download
+    </Button>
+  );
+}
 
 export function ExportStatus() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const { toast, dismiss, update } = useToast();
+  const { play: playSuccessSound } = useSuccessSound();
   const [toastId, setToastId] = useState<string | null>(null);
   const { exportData, setExportData } = useExportStore();
-  const { status, progress, result } = useExportStatus(
-    exportData as ExportData,
-  );
+  const { status, progress, result, isLoading, queryError } = useJobStatus({
+    jobId: exportData?.runId,
+    enabled: !!exportData?.runId,
+  });
+
   const [, copy] = useCopyToClipboard();
+
+  // Type guard for export result
+  const exportResult: ExportResult | undefined =
+    result && typeof result === "object" && "totalItems" in result
+      ? (result as ExportResult)
+      : undefined;
 
   const shareFileMutation = useMutation(
     trpc.shortLinks.createForDocument.mutationOptions({
@@ -75,22 +119,38 @@ export function ExportStatus() {
     }),
   );
 
-  const handleOnDownload = () => {
+  const handleOnDownload = useCallback(() => {
     if (toastId) {
       dismiss(toastId);
     }
-  };
+  }, [toastId, dismiss]);
 
-  const handleOnShare = ({ expireIn, filePath }: ShareOptions) => {
-    shareFileMutation.mutate({ expireIn, filePath });
+  const handleOnShare = useCallback(
+    ({ expireIn, filePath }: ShareOptions) => {
+      shareFileMutation.mutate({ expireIn, filePath });
 
-    if (toastId) {
-      dismiss(toastId);
-    }
-  };
+      if (toastId) {
+        dismiss(toastId);
+      }
+    },
+    [toastId, dismiss, shareFileMutation],
+  );
+
+  // Track last progress to avoid unnecessary updates
+  const lastProgressRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    if (status === "FAILED") {
+    // Skip error handling for accounting exports - the export bar handles those
+    if (exportData?.exportType === "accounting") {
+      return;
+    }
+
+    if (status === "failed" || queryError) {
+      // Dismiss the progress toast if it exists
+      if (toastId) {
+        dismiss(toastId);
+      }
+
       toast({
         duration: 2500,
         variant: "error",
@@ -100,10 +160,24 @@ export function ExportStatus() {
       setToastId(null);
       setExportData(undefined);
     }
-  }, [status]);
+  }, [
+    status,
+    queryError,
+    toast,
+    setExportData,
+    toastId,
+    dismiss,
+    exportData?.exportType,
+  ]);
 
+  // Create toast when export starts (only for file exports - accounting uses the export bar)
   useEffect(() => {
-    if (exportData && !toastId) {
+    if (exportData?.runId && !toastId) {
+      // Skip toast for accounting exports - the export bar handles those
+      if (exportData.exportType === "accounting") {
+        return;
+      }
+
       const { id } = toast({
         title: "Exporting transactions.",
         variant: "progress",
@@ -113,82 +187,137 @@ export function ExportStatus() {
       });
 
       setToastId(id);
-    } else if (toastId && status === "IN_PROGRESS") {
+      lastProgressRef.current = 0;
+      completionHandledRef.current = false; // Reset completion flag for new export
+    }
+  }, [exportData?.runId, exportData?.exportType, toastId, toast]);
+
+  // Update progress only when it changes (skip for accounting exports)
+  useEffect(() => {
+    if (!toastId || exportData?.exportType === "accounting") return;
+
+    const currentProgress =
+      status === "completed"
+        ? 100
+        : progress !== undefined
+          ? Number(progress)
+          : undefined;
+
+    if (
+      currentProgress !== undefined &&
+      currentProgress !== lastProgressRef.current &&
+      (status === "active" || status === "waiting" || status === "completed")
+    ) {
+      lastProgressRef.current = currentProgress;
       update(toastId, {
         id: toastId,
-        progress: Number(progress),
+        progress: currentProgress,
       });
     }
+  }, [toastId, status, progress, update, exportData?.exportType]);
 
-    if (status === "COMPLETED" && result) {
-      // Invalidate documents query to refresh the list
+  // Handle completion separately - use a ref to prevent multiple triggers
+  const completionHandledRef = useRef(false);
+
+  // Handle file export completion (accounting exports are handled by export bar)
+  useEffect(() => {
+    // Skip completion handling for accounting exports
+    if (exportData?.exportType === "accounting") {
+      return;
+    }
+
+    if (status === "completed" && toastId && !completionHandledRef.current) {
+      completionHandledRef.current = true;
+
+      // Play success sound
+      playSuccessSound();
+
+      // Invalidate queries for file exports
       queryClient.invalidateQueries({
         queryKey: trpc.documents.get.infiniteQueryKey(),
       });
-
-      // Invalidate search query to refresh the results
       queryClient.invalidateQueries({
         queryKey: trpc.search.global.queryKey(),
       });
 
-      // @ts-expect-error
-      update(toastId, {
-        id: toastId,
-        title: "Export completed",
-        description: `Your export is ready based on ${result.totalItems} transactions. It's stored in your Vault.`,
-        variant: "success",
-        footer: (
-          <div className="mt-4 flex space-x-4">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="border space-x-2"
-                >
-                  <span>Share URL</span>
-                  <Icons.ChevronDown />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="z-[100]">
-                {options.map((option, idx) => (
-                  <DropdownMenuItem
-                    key={idx.toString()}
-                    onClick={() =>
-                      handleOnShare({
-                        expireIn: option.expireIn,
-                        filePath: result.fullPath,
-                      })
-                    }
-                  >
-                    {option.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+      // Wait a bit for result to be available, then update toast
+      setTimeout(() => {
+        if (exportResult) {
+          // File export completion with download/share options
+          update(toastId, {
+            id: toastId,
+            title: "Export completed",
+            description: `Your export is ready based on ${exportResult.totalItems} transactions. It's stored in your Vault.`,
+            variant: "success",
+            footer: (
+              <div className="mt-4 flex space-x-4">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="border space-x-2"
+                    >
+                      <span>Share URL</span>
+                      <Icons.ChevronDown />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="z-[100]">
+                    {options.map((option, idx) => (
+                      <DropdownMenuItem
+                        key={idx.toString()}
+                        onClick={() =>
+                          handleOnShare({
+                            expireIn: option.expireIn,
+                            filePath: exportResult.fullPath,
+                          })
+                        }
+                      >
+                        {option.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
-            <Button
-              size="sm"
-              onClick={() => {
-                if (result?.fullPath && result?.fileName) {
-                  downloadFile(
-                    `/api/download/file?path=${result.fullPath}&filename=${result.fileName}`,
-                    result.fileName,
-                  );
-                }
-                handleOnDownload();
-              }}
-            >
-              Download
-            </Button>
-          </div>
-        ),
-      });
+                <DownloadButton
+                  fullPath={exportResult.fullPath}
+                  fileName={exportResult.fileName}
+                  onDownload={handleOnDownload}
+                />
+              </div>
+            ),
+          });
+        } else {
+          // Simple completion toast if result isn't available
+          update(toastId, {
+            id: toastId,
+            title: "Export completed",
+            description: "Your export is ready. It's stored in your Vault.",
+            variant: "success",
+          });
+        }
 
-      setToastId(null);
-      setExportData(undefined);
+        // Clear after showing completion
+        setTimeout(() => {
+          setToastId(null);
+          setExportData(undefined);
+          completionHandledRef.current = false;
+        }, 100);
+      }, 500);
     }
-  }, [toastId, progress, status]);
+  }, [
+    status,
+    exportResult,
+    exportData?.exportType,
+    toastId,
+    update,
+    queryClient,
+    trpc,
+    setExportData,
+    handleOnShare,
+    handleOnDownload,
+    playSuccessSound,
+  ]);
 
   return null;
 }

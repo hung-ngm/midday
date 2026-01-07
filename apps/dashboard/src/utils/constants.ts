@@ -1,16 +1,16 @@
 export const Cookies = {
   PreferredSignInProvider: "preferred-signin-provider",
-  TransactionsColumns: "transactions-columns",
-  InvoicesColumns: "invoices-columns",
-  MfaSetupVisited: "mfa-setup-visited",
+  // Unified table settings cookie (used by transactions, customers, invoices)
+  TableSettings: "table-settings",
   InboxFilter: "inbox-filter-v2",
-  TrackingConsent: "tracking-consent",
   InboxOrder: "inbox-order",
   HideConnectFlow: "hide-connect-flow",
   LastProject: "last-project",
   WeeklyCalendar: "weekly-calendar",
+  ForcePrimary: "midday-force-primary",
 };
 
 export const LocalStorageKeys = {
   MatchLearningToastSeen: "match-learning-toast-seen",
+  MetricsFilter: "metrics-filter-preferences",
 };

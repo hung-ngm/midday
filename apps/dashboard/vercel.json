@@ -4,5 +4,34 @@
   "github": {
     "enabled": false
   },
-  "regions": ["fra1", "iad1", "sfo1"]
+  "buildCommand": "cd ../.. && turbo run build --filter=@midday/dashboard --only",
+  "regions": ["fra1", "iad1", "sfo1"],
+  "headers": [
+    {
+      "source": "/_next/static/:path*",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "https://app.midday.ai"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
+  ]
 }

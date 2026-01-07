@@ -23,8 +23,12 @@ export const withPrimaryReadAfterWrite: MiddlewareHandler = async (c, next) => {
 
   let teamId: string | null = null;
 
-  // Try to get teamId from session/user context
-  if (session?.user?.id) {
+  // For OAuth sessions, use the token's team, not the user's current team
+  if (session?.oauth) {
+    teamId = session.teamId || null;
+  }
+  // For non-OAuth sessions, get user's current team
+  else if (session?.user?.id) {
     const cacheKey = `user:${session.user.id}:team`;
     teamId = (await teamPermissionsCache.get(cacheKey)) || null;
 
@@ -38,8 +42,7 @@ export const withPrimaryReadAfterWrite: MiddlewareHandler = async (c, next) => {
           await teamPermissionsCache.set(cacheKey, userTeamId);
         }
       } catch (error) {
-        logger.warn({
-          msg: "Failed to fetch user team",
+        logger.warn("Failed to fetch user team", {
           userId: session.user.id,
           error: error instanceof Error ? error.message : "Unknown error",
         });

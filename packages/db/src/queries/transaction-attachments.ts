@@ -1,6 +1,11 @@
 import type { Database } from "@db/client";
-import { inbox, transactionAttachments, transactions } from "@db/schema";
-import { and, eq } from "drizzle-orm";
+import {
+  accountingSyncRecords,
+  inbox,
+  transactionAttachments,
+  transactions,
+} from "@db/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { createActivity } from "./activities";
 
 export type Attachment = {
@@ -33,6 +38,26 @@ export async function createAttachments(
     )
     .returning();
 
+  // Reset export status for affected transactions so they reappear in review
+  const transactionIds = [
+    ...new Set(
+      result
+        .map((a) => a.transactionId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+
+  if (transactionIds.length > 0) {
+    await db
+      .delete(accountingSyncRecords)
+      .where(
+        and(
+          inArray(accountingSyncRecords.transactionId, transactionIds),
+          eq(accountingSyncRecords.teamId, teamId),
+        ),
+      );
+  }
+
   // Create activity for each attachment created
   for (const attachment of result) {
     createActivity(db, {
@@ -59,6 +84,45 @@ type DeleteAttachmentParams = {
   teamId: string;
 };
 
+type GetTransactionAttachmentParams = {
+  transactionId: string;
+  attachmentId: string;
+  teamId: string;
+};
+
+export async function getTransactionAttachment(
+  db: Database,
+  params: GetTransactionAttachmentParams,
+) {
+  const { transactionId, attachmentId, teamId } = params;
+
+  const [result] = await db
+    .select({
+      id: transactionAttachments.id,
+      name: transactionAttachments.name,
+      path: transactionAttachments.path,
+      type: transactionAttachments.type,
+      size: transactionAttachments.size,
+      transactionId: transactionAttachments.transactionId,
+      teamId: transactionAttachments.teamId,
+    })
+    .from(transactionAttachments)
+    .innerJoin(
+      transactions,
+      eq(transactionAttachments.transactionId, transactions.id),
+    )
+    .where(
+      and(
+        eq(transactionAttachments.id, attachmentId),
+        eq(transactionAttachments.transactionId, transactionId),
+        eq(transactionAttachments.teamId, teamId),
+        eq(transactions.teamId, teamId),
+      ),
+    );
+
+  return result;
+}
+
 export async function deleteAttachment(
   db: Database,
   params: DeleteAttachmentParams,
@@ -83,7 +147,18 @@ export async function deleteAttachment(
     throw new Error("Attachment not found");
   }
 
-  // Find inbox by transaction_id and set transaction_id to null and status to pending if it exists
+  // Update inbox items connected to this attachment
+  // First, update inbox items that have this specific attachmentId
+  await db
+    .update(inbox)
+    .set({
+      attachmentId: null,
+      transactionId: null,
+      status: "pending",
+    })
+    .where(eq(inbox.attachmentId, result.id));
+
+  // Also update inbox items by transaction_id (in case there are multiple inbox items for the same transaction)
   if (result.transactionId) {
     await db
       .update(inbox)
@@ -91,7 +166,13 @@ export async function deleteAttachment(
         transactionId: null,
         status: "pending",
       })
-      .where(eq(inbox.transactionId, result.transactionId));
+      .where(
+        and(
+          eq(inbox.transactionId, result.transactionId),
+          // Only update if attachmentId is null or doesn't match (to avoid double updates)
+          sql`(${inbox.attachmentId} IS NULL OR ${inbox.attachmentId} != ${result.id})`,
+        ),
+      );
   }
 
   // Delete tax_rate and tax_type from the transaction
@@ -100,6 +181,16 @@ export async function deleteAttachment(
       .update(transactions)
       .set({ taxRate: null, taxType: null })
       .where(eq(transactions.id, result.transactionId));
+
+    // Reset export status so transaction reappears in review
+    await db
+      .delete(accountingSyncRecords)
+      .where(
+        and(
+          eq(accountingSyncRecords.transactionId, result.transactionId),
+          eq(accountingSyncRecords.teamId, params.teamId),
+        ),
+      );
   }
 
   // Delete the attachment

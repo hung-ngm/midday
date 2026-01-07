@@ -22,15 +22,16 @@ const statusFilters = [
   { id: "done", name: "Matched" },
   { id: "pending", name: "Pending" },
   { id: "suggested_match", name: "Suggested Match" },
+  { id: "no_match", name: "Unmatched" },
 ];
 
 export function InboxSearch() {
   const [isOpen, setIsOpen] = useState(false);
-  const { params, setParams, hasFilter } = useInboxFilterParams();
+  const { params: filterParams, setParams, hasFilter } = useInboxFilterParams();
 
   useHotkeys("esc", () => setParams({ q: null }), {
     enableOnFormTags: true,
-    enabled: Boolean(params.q),
+    enabled: Boolean(filterParams.q),
   });
 
   const handleSearch = (evt: React.ChangeEvent<HTMLInputElement>) => {
@@ -57,7 +58,7 @@ export function InboxSearch() {
           <Input
             placeholder="Search or filter"
             className="pl-9 w-full"
-            value={params.q ?? ""}
+            value={filterParams.q ?? ""}
             onChange={handleSearch}
             autoComplete="off"
             autoCapitalize="none"
@@ -101,13 +102,17 @@ export function InboxSearch() {
                 className="p-0"
               >
                 <DropdownMenuRadioGroup
-                  value={params.status ?? "all"}
+                  value={filterParams.status ?? "all"}
                   onValueChange={(value) =>
                     setParams({
                       status:
                         value === "all"
                           ? null
-                          : (value as "done" | "pending" | "suggested_match"),
+                          : (value as
+                              | "done"
+                              | "pending"
+                              | "suggested_match"
+                              | "no_match"),
                     })
                   }
                 >

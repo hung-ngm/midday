@@ -3,7 +3,7 @@ import { LogEvents } from "@midday/events/events";
 import { setupAnalytics } from "@midday/events/server";
 import { getSession } from "@midday/supabase/cached-queries";
 import { createClient } from "@midday/supabase/server";
-import { addYears } from "date-fns";
+import { addSeconds, addYears } from "date-fns";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
@@ -15,7 +15,6 @@ export async function GET(req: NextRequest) {
   const client = requestUrl.searchParams.get("client");
   const returnTo = requestUrl.searchParams.get("return_to");
   const provider = requestUrl.searchParams.get("provider");
-  const mfaSetupVisited = cookieStore.has(Cookies.MfaSetupVisited);
 
   if (client === "desktop") {
     return NextResponse.redirect(`${requestUrl.origin}/verify?code=${code}`);
@@ -38,10 +37,15 @@ export async function GET(req: NextRequest) {
     if (session) {
       const userId = session.user.id;
 
-      const analytics = await setupAnalytics({
-        userId,
-        fullName: session.user.user_metadata?.full_name,
+      // Set cookie to force primary database reads for new users (10 seconds)
+      // This prevents replication lag issues when user record hasn't replicated yet
+      cookieStore.set(Cookies.ForcePrimary, "true", {
+        expires: addSeconds(new Date(), 10),
+        httpOnly: false, // Needs to be readable by client-side tRPC
+        sameSite: "lax",
       });
+
+      const analytics = await setupAnalytics();
 
       await analytics.track({
         event: LogEvents.SignIn.name,
@@ -63,14 +67,6 @@ export async function GET(req: NextRequest) {
         return NextResponse.redirect(`${requestUrl.origin}/teams/create`);
       }
     }
-  }
-
-  if (!mfaSetupVisited) {
-    cookieStore.set(Cookies.MfaSetupVisited, "true", {
-      expires: addYears(new Date(), 1),
-    });
-
-    return NextResponse.redirect(`${requestUrl.origin}/mfa/setup`);
   }
 
   if (returnTo) {

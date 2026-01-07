@@ -23,7 +23,7 @@ export function OrderStatus({
   return (
     <div
       className={cn(
-        "px-2 py-0.5 rounded-full cursor-default font-mono inline-flex max-w-full text-[11px]",
+        "px-2 py-0.5 rounded-full cursor-default inline-flex max-w-full text-[11px]",
         status === "paid" &&
           "text-[#00C969] bg-[#DDF1E4] dark:text-[#00C969] dark:bg-[#00C969]/10",
         status === "pending" &&
@@ -32,6 +32,8 @@ export function OrderStatus({
           "text-[#878787] bg-[#F2F1EF] text-[10px] dark:text-[#878787] dark:bg-[#1D1D1D]",
         status === "failed" &&
           "text-[#1D1D1D] bg-[#878787]/10 dark:text-[#F5F5F3] dark:bg-[#F5F5F3]/10",
+        status === "refunded" &&
+          "text-[#878787] bg-[#F2F1EF] text-[10px] dark:text-[#878787] dark:bg-[#1D1D1D]",
         className,
       )}
     >

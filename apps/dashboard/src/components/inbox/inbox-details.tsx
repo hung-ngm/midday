@@ -1,13 +1,12 @@
 import { FileViewer } from "@/components/file-viewer";
 import { FormatAmount } from "@/components/format-amount";
+import { useFileUrl } from "@/hooks/use-file-url";
 import { useInboxFilterParams } from "@/hooks/use-inbox-filter-params";
 import { useInboxParams } from "@/hooks/use-inbox-params";
 import { useUserQuery } from "@/hooks/use-user";
 import { downloadFile } from "@/lib/download";
 import { useTRPC } from "@/trpc/client";
 import { getUrl } from "@/utils/environment";
-import { formatDate } from "@/utils/format";
-import { getInitials } from "@/utils/format";
 import { getWebsiteLogo } from "@/utils/logos";
 import { Avatar, AvatarFallback, AvatarImageNext } from "@midday/ui/avatar";
 import { Button } from "@midday/ui/button";
@@ -16,6 +15,9 @@ import { DialogTrigger } from "@midday/ui/dialog";
 import {
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@midday/ui/dropdown-menu";
 import { DropdownMenu, DropdownMenuTrigger } from "@midday/ui/dropdown-menu";
 import { Icons } from "@midday/ui/icons";
@@ -28,15 +30,18 @@ import {
   TooltipTrigger,
 } from "@midday/ui/tooltip";
 import { useToast } from "@midday/ui/use-toast";
+import { formatDate, getInitials } from "@midday/utils/format";
+import { getTaxTypeLabel } from "@midday/utils/tax";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-
 import { MoreVertical, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useCopyToClipboard } from "usehooks-ts";
 import { EditInboxModal } from "../modals/edit-inbox-modal";
+import { DeleteInboxDialog } from "./delete-inbox-dialog";
 import { InboxActions } from "./inbox-actions";
 import { InboxDetailsSkeleton } from "./inbox-details-skeleton";
+import { InboxSourceIcon } from "./inbox-source-icon";
 
 export function InboxDetails() {
   const { setParams, params } = useInboxParams();
@@ -46,6 +51,7 @@ export function InboxDetails() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [showFallback, setShowFallback] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const { data: user } = useUserQuery();
   const [, copy] = useCopyToClipboard();
 
@@ -58,76 +64,6 @@ export function InboxDetails() {
         enabled: !!id,
       },
     ),
-  );
-
-  const deleteInboxMutation = useMutation(
-    trpc.inbox.delete.mutationOptions({
-      onMutate: async ({ id }) => {
-        // Cancel outgoing refetches
-        await queryClient.cancelQueries({
-          queryKey: trpc.inbox.get.infiniteQueryKey(),
-        });
-
-        // Get current data
-        const previousData = queryClient.getQueriesData({
-          queryKey: trpc.inbox.get.infiniteQueryKey(),
-        });
-
-        // Flatten the data from all pages to find the current index and the next item
-        const allInboxes = previousData
-          // @ts-expect-error
-          .flatMap(([, data]) => data?.pages ?? [])
-          .flatMap((page) => page.data ?? []);
-
-        const currentIndex = allInboxes.findIndex((item) => item.id === id);
-        let nextInboxId: string | null = null;
-
-        if (allInboxes.length > 1) {
-          if (currentIndex === allInboxes.length - 1) {
-            // If it was the last item, select the previous one
-            nextInboxId = allInboxes[currentIndex - 1]?.id ?? null;
-          } else if (currentIndex !== -1) {
-            // Otherwise, select the next one
-            nextInboxId = allInboxes[currentIndex + 1]?.id ?? null;
-          }
-        }
-        // If list had 0 or 1 item, or index not found, nextInboxId remains null
-
-        // Optimistically update infinite query data
-        queryClient.setQueriesData(
-          { queryKey: trpc.inbox.get.infiniteQueryKey() },
-          (old: any) => ({
-            pages: old.pages.map((page: any) => ({
-              ...page,
-              data: page.data.filter((item: any) => item.id !== id),
-            })),
-            pageParams: old.pageParams,
-          }),
-        );
-
-        setParams({
-          ...params,
-          inboxId: nextInboxId,
-        });
-
-        return { previousData };
-      },
-      onError: (_, __, context) => {
-        // Restore previous data on error
-        if (context?.previousData) {
-          queryClient.setQueriesData(
-            { queryKey: trpc.inbox.get.infiniteQueryKey() },
-            context.previousData,
-          );
-        }
-      },
-      onSettled: () => {
-        // Refetch after error or success
-        queryClient.invalidateQueries({
-          queryKey: trpc.inbox.get.infiniteQueryKey(),
-        });
-      },
-    }),
   );
 
   const updateInboxMutation = useMutation(
@@ -158,10 +94,93 @@ export function InboxDetails() {
     }),
   );
 
-  const handleOnDelete = () => {
-    if (data?.id) {
-      deleteInboxMutation.mutate({ id: data.id });
+  const blockSenderMutation = useMutation(
+    trpc.inbox.blocklist.create.mutationOptions({
+      onMutate: async (variables) => {
+        // Check if the currently selected inbox item matches what was blocked
+        if (data) {
+          const shouldDeselect =
+            (variables.type === "email" &&
+              data.senderEmail &&
+              data.senderEmail.toLowerCase() ===
+                variables.value.toLowerCase()) ||
+            (variables.type === "domain" &&
+              data.website &&
+              data.website.toLowerCase() === variables.value.toLowerCase());
+
+          if (shouldDeselect) {
+            // Cancel outgoing refetches
+            await queryClient.cancelQueries({
+              queryKey: trpc.inbox.get.infiniteQueryKey(),
+            });
+
+            // Get current data before invalidation
+            const previousData = queryClient.getQueriesData({
+              queryKey: trpc.inbox.get.infiniteQueryKey(),
+            });
+
+            // Flatten the data from all pages to find the current index and the next item
+            const allInboxes = previousData
+              // @ts-expect-error
+              .flatMap(([, data]) => data?.pages ?? [])
+              .flatMap((page) => page.data ?? []);
+
+            const currentIndex = allInboxes.findIndex(
+              (item) => item.id === data.id,
+            );
+            let nextInboxId: string | null = null;
+
+            if (allInboxes.length > 1) {
+              if (currentIndex === allInboxes.length - 1) {
+                // If it was the last item, select the previous one
+                nextInboxId = allInboxes[currentIndex - 1]?.id ?? null;
+              } else if (currentIndex !== -1) {
+                // Otherwise, select the next one
+                nextInboxId = allInboxes[currentIndex + 1]?.id ?? null;
+              }
+            }
+
+            // Select the next item
+            setParams({
+              ...params,
+              inboxId: nextInboxId,
+            });
+
+            return { previousData };
+          }
+        }
+      },
+      onSuccess: () => {
+        queryClient.invalidateQueries({
+          queryKey: trpc.inbox.blocklist.get.queryKey(),
+        });
+        queryClient.invalidateQueries({
+          queryKey: trpc.inbox.get.infiniteQueryKey(),
+        });
+      },
+    }),
+  );
+
+  const handleBlockEmail = () => {
+    if (data?.senderEmail) {
+      blockSenderMutation.mutate({
+        type: "email",
+        value: data.senderEmail,
+      });
     }
+  };
+
+  const handleBlockDomain = () => {
+    if (data?.website) {
+      blockSenderMutation.mutate({
+        type: "domain",
+        value: data.website,
+      });
+    }
+  };
+
+  const handleOnDelete = () => {
+    setShowDeleteDialog(true);
   };
 
   const handleRetryMatching = () => {
@@ -198,6 +217,22 @@ export function InboxDetails() {
     });
   };
 
+  const { url: downloadUrl } = useFileUrl(
+    data?.filePath && data?.fileName
+      ? {
+          type: "download",
+          filePath: data.filePath.join("/"),
+          filename: data.fileName,
+        }
+      : null,
+  );
+
+  const handleDownload = () => {
+    if (downloadUrl && data?.fileName) {
+      downloadFile(downloadUrl, data.fileName);
+    }
+  };
+
   const fallback = showFallback || (!data?.website && data?.displayName);
 
   if (isLoading) {
@@ -219,20 +254,7 @@ export function InboxDetails() {
         </div>
 
         <div className="ml-auto flex items-center">
-          {data?.inboxAccount?.provider === "gmail" && (
-            <div className="border-r border-border pr-4">
-              <TooltipProvider delayDuration={100}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Icons.Gmail className="w-4 h-4" />
-                  </TooltipTrigger>
-                  <TooltipContent className="text-xs px-3 py-1.5">
-                    {data.inboxAccount.email}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          )}
+          {data && <InboxSourceIcon data={data} />}
           <EditInboxModal>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -288,14 +310,8 @@ export function InboxDetails() {
                 </DropdownMenuItem>
 
                 <DropdownMenuItem
-                  onClick={() => {
-                    if (data?.filePath && data?.fileName) {
-                      downloadFile(
-                        `/api/download/file?path=${data.filePath.join("/")}&filename=${data.fileName}`,
-                        data.fileName,
-                      );
-                    }
-                  }}
+                  onClick={handleDownload}
+                  disabled={!downloadUrl}
                 >
                   <Icons.ProjectStatus className="mr-2 size-4" />
                   <span className="text-xs">Download</span>
@@ -305,6 +321,47 @@ export function InboxDetails() {
                   <Icons.Copy className="mr-2 size-4" />
                   <span className="text-xs">Copy Link</span>
                 </DropdownMenuItem>
+
+                {(data?.website || data?.senderEmail) && (
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <Icons.Block className="mr-2 size-4" />
+                      <span className="text-xs">Blocklist</span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      {data?.senderEmail && (
+                        <DropdownMenuItem
+                          onClick={handleBlockEmail}
+                          disabled={blockSenderMutation.isPending}
+                        >
+                          {blockSenderMutation.isPending ? (
+                            <>
+                              <Icons.Refresh className="mr-2 size-4 animate-spin" />
+                              <span className="text-xs">Blocking...</span>
+                            </>
+                          ) : (
+                            <span className="text-xs">Block email</span>
+                          )}
+                        </DropdownMenuItem>
+                      )}
+                      {data?.website && (
+                        <DropdownMenuItem
+                          onClick={handleBlockDomain}
+                          disabled={blockSenderMutation.isPending}
+                        >
+                          {blockSenderMutation.isPending ? (
+                            <>
+                              <Icons.Refresh className="mr-2 size-4 animate-spin" />
+                              <span className="text-xs">Blocking...</span>
+                            </>
+                          ) : (
+                            <span className="text-xs">Block domain</span>
+                          )}
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                )}
 
                 {/* Destructive Actions - At Bottom */}
                 <DropdownMenuItem
@@ -368,12 +425,46 @@ export function InboxDetails() {
                   {isProcessing && !data.currency && (
                     <Skeleton className="h-3 w-[50px]" />
                   )}
-                  {data.currency && data.amount != null && (
-                    <FormatAmount
-                      amount={data.amount}
-                      currency={data.currency}
-                    />
-                  )}
+                  {data.currency &&
+                    data.amount != null &&
+                    (!isProcessing &&
+                    data?.taxAmount &&
+                    data.taxAmount > 0 &&
+                    data.currency ? (
+                      <TooltipProvider delayDuration={100}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help">
+                              <FormatAmount
+                                amount={data.amount}
+                                currency={data.currency}
+                              />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="text-xs px-2 py-1">
+                            <div className="flex flex-col gap-0.5">
+                              <span>
+                                {data.taxType &&
+                                  `${getTaxTypeLabel(data.taxType)} `}
+                                <FormatAmount
+                                  amount={data.taxAmount}
+                                  currency={data.currency}
+                                  maximumFractionDigits={2}
+                                />
+                                {data.taxRate &&
+                                  data.taxRate > 0 &&
+                                  ` (${data.taxRate}%)`}
+                              </span>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <FormatAmount
+                        amount={data.amount}
+                        currency={data.currency}
+                      />
+                    ))}
                 </div>
               </div>
             </div>
@@ -393,20 +484,46 @@ export function InboxDetails() {
             <InboxActions data={data} key={data.id} />
           </div>
 
-          {data?.filePath && (
-            <FileViewer
-              mimeType={data.contentType}
-              url={`/api/proxy?filePath=vault/${data?.filePath.join("/")}`}
-              // If the order changes, the file viewer will remount otherwise the PDF worker will crash
-              key={`${params.order}-${JSON.stringify(filterParams)}`}
-            />
-          )}
+          <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0 scrollbar-hide">
+            {data?.filePath && (
+              <div className="min-h-0 flex-shrink-0">
+                <FileViewer
+                  mimeType={data.contentType}
+                  url={`${process.env.NEXT_PUBLIC_API_URL}/files/proxy?filePath=vault/${data?.filePath.join("/")}`}
+                  // If the order changes, the file viewer will remount otherwise the PDF worker will crash
+                  key={`${params.order}-${JSON.stringify(filterParams)}-primary`}
+                />
+              </div>
+            )}
+
+            {data?.relatedItems &&
+              data.relatedItems.length > 0 &&
+              data.relatedItems.map(
+                (relatedItem) =>
+                  relatedItem.filePath && (
+                    <div key={relatedItem.id} className="min-h-0 flex-shrink-0">
+                      <FileViewer
+                        mimeType={relatedItem.contentType}
+                        url={`${process.env.NEXT_PUBLIC_API_URL}/files/proxy?filePath=vault/${relatedItem.filePath.join("/")}`}
+                        key={`${relatedItem.id}-${params.order}-${JSON.stringify(filterParams)}`}
+                      />
+                    </div>
+                  ),
+              )}
+          </div>
         </div>
       ) : (
         <div className="p-8 text-center text-muted-foreground">
           No attachment selected
         </div>
       )}
+
+      <DeleteInboxDialog
+        id={data?.id!}
+        filePath={data?.filePath ?? null}
+        isOpen={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+      />
     </div>
   );
 }

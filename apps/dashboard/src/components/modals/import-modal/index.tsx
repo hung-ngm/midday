@@ -1,11 +1,13 @@
 "use client";
 
-import { importTransactionsAction } from "@/actions/transactions/import-transactions";
-import { useSyncStatus } from "@/hooks/use-sync-status";
+import { useInvalidateTransactionQueries } from "@/hooks/use-invalidate-transaction-queries";
+import { useJobStatus } from "@/hooks/use-job-status";
+import { useTeamQuery } from "@/hooks/use-team";
 import { useUpload } from "@/hooks/use-upload";
 import { useUserQuery } from "@/hooks/use-user";
 import { useZodForm } from "@/hooks/use-zod-form";
 import { useTRPC } from "@/trpc/client";
+import { uniqueCurrencies } from "@midday/location/currencies";
 import { AnimatedSizeContainer } from "@midday/ui/animated-size-container";
 import {
   Dialog,
@@ -18,8 +20,7 @@ import { Icons } from "@midday/ui/icons";
 import { SubmitButton } from "@midday/ui/submit-button";
 import { useToast } from "@midday/ui/use-toast";
 import { stripSpecialCharacters } from "@midday/utils";
-import { useQueryClient } from "@tanstack/react-query";
-import { useAction } from "next-safe-action/hooks";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { parseAsBoolean, parseAsString, useQueryStates } from "nuqs";
 import { useEffect, useState } from "react";
 import { ImportCsvContext, importSchema } from "./context";
@@ -28,16 +29,13 @@ import { SelectFile } from "./select-file";
 
 const pages = ["select-file", "confirm-import"] as const;
 
-type Props = {
-  currencies: string[];
-  defaultCurrency: string;
-};
-
-export function ImportModal({ currencies, defaultCurrency }: Props) {
+export function ImportModal() {
+  const { data: team } = useTeamQuery();
+  const defaultCurrency = team?.baseCurrency || "USD";
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const [runId, setRunId] = useState<string | undefined>();
-  const [accessToken, setAccessToken] = useState<string | undefined>();
+  const invalidateTransactionQueries = useInvalidateTransactionQueries();
+  const [jobId, setJobId] = useState<string | undefined>();
   const [isImporting, setIsImporting] = useState(false);
   const [fileColumns, setFileColumns] = useState<string[] | null>(null);
   const [firstRows, setFirstRows] = useState<Record<string, string>[] | null>(
@@ -53,8 +51,6 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
 
   const { toast } = useToast();
 
-  const { status, setStatus } = useSyncStatus({ runId, accessToken });
-
   const [params, setParams] = useQueryStates({
     step: parseAsString,
     accountId: parseAsString,
@@ -64,25 +60,37 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
 
   const isOpen = params.step === "import";
 
-  const importTransactions = useAction(importTransactionsAction, {
-    onSuccess: ({ data }) => {
-      if (data) {
-        setRunId(data.id);
-        setAccessToken(data.publicAccessToken);
-      }
-    },
-    onError: () => {
-      setIsImporting(false);
-      setRunId(undefined);
-      setStatus("FAILED");
-
-      toast({
-        duration: 3500,
-        variant: "error",
-        title: "Something went wrong please try again.",
-      });
-    },
+  const { status } = useJobStatus({
+    jobId,
+    enabled: !!jobId && isOpen,
   });
+
+  const importTransactions = useMutation(
+    trpc.transactions.import.mutationOptions({
+      onSuccess: (data) => {
+        if (data?.id) {
+          setJobId(data.id);
+        } else {
+          setIsImporting(false);
+          toast({
+            duration: 3500,
+            variant: "error",
+            title: "Something went wrong please try again.",
+          });
+        }
+      },
+      onError: () => {
+        setIsImporting(false);
+        setJobId(undefined);
+
+        toast({
+          duration: 3500,
+          variant: "error",
+          title: "Something went wrong please try again.",
+        });
+      },
+    }),
+  );
 
   const {
     control,
@@ -102,9 +110,11 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
   const file = watch("file");
 
   const onclose = () => {
+    setIsImporting(false);
     setFileColumns(null);
     setFirstRows(null);
     setPageNumber(0);
+    setJobId(undefined);
     reset();
 
     setParams({
@@ -128,9 +138,9 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
   }, [params.type]);
 
   useEffect(() => {
-    if (status === "FAILED") {
+    if (status === "failed") {
       setIsImporting(false);
-      setRunId(undefined);
+      setJobId(undefined);
 
       toast({
         duration: 3500,
@@ -138,18 +148,17 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
         title: "Something went wrong please try again or contact support.",
       });
     }
-  }, [status]);
+  }, [status, toast]);
 
   useEffect(() => {
-    if (status === "COMPLETED") {
-      setRunId(undefined);
+    if (status === "completed") {
       setIsImporting(false);
-      onclose();
+      setJobId(undefined);
 
-      queryClient.invalidateQueries({
-        queryKey: trpc.transactions.get.queryKey(),
-      });
+      // Invalidate all transaction-related queries (transactions, reports, widgets)
+      invalidateTransactionQueries();
 
+      // Also invalidate bank-related queries
       queryClient.invalidateQueries({
         queryKey: trpc.bankAccounts.get.queryKey(),
       });
@@ -158,29 +167,27 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
         queryKey: trpc.bankConnections.get.queryKey(),
       });
 
-      queryClient.invalidateQueries({
-        queryKey: trpc.reports.pathKey(),
-      });
-
       toast({
         duration: 3500,
         variant: "success",
         title: "Transactions imported successfully.",
       });
+
+      onclose();
     }
   }, [status]);
 
   // Go to second page if file looks good
   useEffect(() => {
-    if (file && fileColumns && pageNumber === 0) {
+    if (file && fileColumns && firstRows && pageNumber === 0) {
       setPageNumber(1);
     }
-  }, [file, fileColumns, pageNumber]);
+  }, [file, fileColumns, firstRows, pageNumber]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onclose}>
-      <DialogContent>
-        <div className="p-4 pb-0">
+      <DialogContent className="overflow-visible">
+        <div className="p-4 pb-0 max-h-[calc(100svh-10vw)] overflow-y-auto overflow-x-visible">
           <DialogHeader>
             <div className="flex space-x-4 items-center mb-4">
               {!params.hide && (
@@ -201,11 +208,11 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
               {page === "select-file" &&
                 "Upload a CSV file of your transactions."}
               {page === "confirm-import" &&
-                "We’ve mapped each column to what we believe is correct, but please review the data below to confirm it’s accurate."}
+                "We've mapped each column to what we believe is correct, but please review the data below to confirm it's accurate."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="relative">
+          <div className="relative overflow-visible">
             <AnimatedSizeContainer height>
               <ImportCsvContext.Provider
                 value={{
@@ -218,7 +225,7 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
                   setValue,
                 }}
               >
-                <div>
+                <div className="overflow-visible">
                   <form
                     className="flex flex-col gap-y-4"
                     onSubmit={handleSubmit(async (data) => {
@@ -231,7 +238,7 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
                         file,
                       });
 
-                      importTransactions.execute({
+                      importTransactions.mutate({
                         filePath: path,
                         currency: data.currency,
                         bankAccountId: data.bank_account_id,
@@ -241,6 +248,7 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
                           amount: data.amount,
                           date: data.date,
                           description: data.description,
+                          balance: data.balance,
                         },
                       });
                     })}
@@ -248,7 +256,7 @@ export function ImportModal({ currencies, defaultCurrency }: Props) {
                     {page === "select-file" && <SelectFile />}
                     {page === "confirm-import" && (
                       <>
-                        <FieldMapping currencies={currencies} />
+                        <FieldMapping currencies={uniqueCurrencies} />
 
                         <SubmitButton
                           isSubmitting={isImporting}

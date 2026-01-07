@@ -1,28 +1,24 @@
 "use client";
 
-import { useTRPC } from "@/trpc/client";
+import { useTemplateUpdate } from "@/hooks/use-template-update";
 import { formatAmount } from "@/utils/format";
 import { calculateLineItemTotal } from "@midday/invoice/calculate";
 import { Button } from "@midday/ui/button";
 import { Icons } from "@midday/ui/icons";
-import { useMutation } from "@tanstack/react-query";
 import { Reorder, useDragControls } from "framer-motion";
 import { useFieldArray, useFormContext, useWatch } from "react-hook-form";
-import { AmountInput } from "./amount-input";
-import { Description } from "./description";
 import type { InvoiceFormValues } from "./form-context";
-import { Input } from "./input";
 import { LabelInput } from "./label-input";
+import { PercentInput } from "./percent-input";
+import { ProductAutocomplete } from "./product-autocomplete";
+import { ProductAwareAmountInput } from "./product-aware-amount-input";
+import { ProductAwareUnitInput } from "./product-aware-unit-input";
 import { QuantityInput } from "./quantity-input";
 
 export function LineItems() {
   const { control } = useFormContext();
   const currency = useWatch({ control, name: "template.currency" });
-
-  const trpc = useTRPC();
-  const updateTemplateMutation = useMutation(
-    trpc.invoiceTemplate.upsert.mutationOptions(),
-  );
+  const { updateTemplate } = useTemplateUpdate();
 
   const includeDecimals = useWatch({
     control,
@@ -34,7 +30,28 @@ export function LineItems() {
     name: "template.includeUnits",
   });
 
+  const includeLineItemTax = useWatch({
+    control,
+    name: "template.includeLineItemTax",
+  });
+
   const maximumFractionDigits = includeDecimals ? 2 : 0;
+
+  // Build grid columns based on settings
+  const getGridCols = () => {
+    if (includeLineItemTax && includeUnits) {
+      return "grid-cols-[1.5fr_12%_20%_12%_15%]";
+    }
+    if (includeLineItemTax) {
+      return "grid-cols-[1.5fr_12%_12%_12%_15%]";
+    }
+    if (includeUnits) {
+      return "grid-cols-[1.5fr_15%_25%_15%]";
+    }
+    return "grid-cols-[1.5fr_15%_15%_15%]";
+  };
+
+  const gridCols = getGridCols();
 
   const { fields, append, remove, swap } = useFieldArray({
     control,
@@ -65,15 +82,11 @@ export function LineItems() {
 
   return (
     <div className="space-y-4">
-      <div
-        className={`grid ${includeUnits ? "grid-cols-[1.5fr_15%25%_15%]" : "grid-cols-[1.5fr_15%_15%_15%]"} gap-4 items-end mb-2`}
-      >
+      <div className={`grid ${gridCols} gap-4 items-end mb-2`}>
         <LabelInput
           name="template.descriptionLabel"
           onSave={(value) => {
-            updateTemplateMutation.mutate({
-              descriptionLabel: value,
-            });
+            updateTemplate({ descriptionLabel: value });
           }}
           className="truncate"
         />
@@ -81,9 +94,7 @@ export function LineItems() {
         <LabelInput
           name="template.quantityLabel"
           onSave={(value) => {
-            updateTemplateMutation.mutate({
-              quantityLabel: value,
-            });
+            updateTemplate({ quantityLabel: value });
           }}
           className="truncate"
         />
@@ -91,19 +102,26 @@ export function LineItems() {
         <LabelInput
           name="template.priceLabel"
           onSave={(value) => {
-            updateTemplateMutation.mutate({
-              priceLabel: value,
-            });
+            updateTemplate({ priceLabel: value });
           }}
           className="truncate"
         />
 
+        {includeLineItemTax && (
+          <LabelInput
+            name="template.lineItemTaxLabel"
+            defaultValue="Tax"
+            onSave={(value) => {
+              updateTemplate({ lineItemTaxLabel: value });
+            }}
+            className="truncate"
+          />
+        )}
+
         <LabelInput
           name="template.totalLabel"
           onSave={(value) => {
-            updateTemplateMutation.mutate({
-              totalLabel: value,
-            });
+            updateTemplate({ totalLabel: value });
           }}
           className="text-right truncate"
         />
@@ -114,6 +132,7 @@ export function LineItems() {
         values={fields}
         onReorder={reorderList}
         className="!m-0"
+        transition={{ duration: 0 }}
       >
         {fields.map((field, index) => (
           <LineItemRow
@@ -126,6 +145,8 @@ export function LineItems() {
             currency={currency}
             maximumFractionDigits={maximumFractionDigits}
             includeUnits={includeUnits}
+            includeLineItemTax={includeLineItemTax}
+            gridCols={gridCols}
           />
         ))}
       </Reorder.Group>
@@ -156,6 +177,8 @@ function LineItemRow({
   currency,
   maximumFractionDigits,
   includeUnits,
+  includeLineItemTax,
+  gridCols,
 }: {
   index: number;
   handleRemove: (index: number) => void;
@@ -164,9 +187,11 @@ function LineItemRow({
   currency: string;
   maximumFractionDigits: number;
   includeUnits?: boolean;
+  includeLineItemTax?: boolean;
+  gridCols: string;
 }) {
   const controls = useDragControls();
-  const { control } = useFormContext();
+  const { control, watch, setValue } = useFormContext();
 
   const locale = useWatch({ control, name: "template.locale" });
 
@@ -180,12 +205,26 @@ function LineItemRow({
     name: `lineItems.${index}.quantity`,
   });
 
+  const lineItemName = watch(`lineItems.${index}.name`);
+
   return (
     <Reorder.Item
-      className={`grid ${includeUnits ? "grid-cols-[1.5fr_15%25%_15%]" : "grid-cols-[1.5fr_15%_15%_15%]"} gap-4 items-start relative group mb-2 w-full`}
+      className={`grid ${gridCols} gap-4 items-start relative group mb-2 w-full`}
       value={item}
       dragListener={false}
       dragControls={controls}
+      transition={{ duration: 0 }}
+      onKeyDown={(e: React.KeyboardEvent<HTMLLIElement>) => {
+        // Don't interfere with arrow keys when they're used for autocomplete navigation
+        if (
+          e.key === "ArrowDown" ||
+          e.key === "ArrowUp" ||
+          e.key === "Enter" ||
+          e.key === "Escape"
+        ) {
+          e.stopPropagation();
+        }
+      }}
     >
       {isReorderable && (
         <Button
@@ -198,15 +237,36 @@ function LineItemRow({
         </Button>
       )}
 
-      <Description name={`lineItems.${index}.name`} />
+      <ProductAutocomplete
+        index={index}
+        value={lineItemName || ""}
+        onChange={(value: string) => {
+          setValue(`lineItems.${index}.name`, value, {
+            shouldValidate: true,
+            shouldDirty: true,
+          });
+        }}
+      />
 
       <QuantityInput name={`lineItems.${index}.quantity`} />
 
       <div className="flex items-center gap-2">
-        <AmountInput name={`lineItems.${index}.price`} />
+        <ProductAwareAmountInput
+          name={`lineItems.${index}.price`}
+          lineItemIndex={index}
+        />
         {includeUnits && <span className="text-xs text-[#878787]">/</span>}
-        {includeUnits && <Input name={`lineItems.${index}.unit`} />}
+        {includeUnits && (
+          <ProductAwareUnitInput
+            name={`lineItems.${index}.unit`}
+            lineItemIndex={index}
+          />
+        )}
       </div>
+
+      {includeLineItemTax && (
+        <PercentInput name={`lineItems.${index}.taxRate`} />
+      )}
 
       <div className="text-right">
         <span className="text-xs text-primary font-mono">

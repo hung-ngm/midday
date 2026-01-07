@@ -1,8 +1,10 @@
+import { useAppOAuth } from "@/hooks/use-app-oauth";
 import { useTRPC } from "@/trpc/client";
 import { getScopeDescription } from "@/utils/scopes";
 import type { UnifiedApp } from "@midday/app-store/types";
 import { openUrl } from "@midday/desktop-client/core";
 import { isDesktopApp } from "@midday/desktop-client/platform";
+import { createClient } from "@midday/supabase/client";
 import {
   Accordion,
   AccordionContent,
@@ -20,11 +22,30 @@ import {
 } from "@midday/ui/carousel";
 import { ScrollArea } from "@midday/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader } from "@midday/ui/sheet";
+import { SubmitButton } from "@midday/ui/submit-button";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import { parseAsBoolean, parseAsString, useQueryStates } from "nuqs";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppSettings } from "./app-settings";
+import { MemoizedReactMarkdown } from "./markdown";
+
+// OAuth app configuration
+const oauthAppConfig: Record<
+  string,
+  { endpoint: string; queryKey: "apps" | "inboxAccounts" | "stripeStatus" }
+> = {
+  slack: { endpoint: "/apps/slack/install-url", queryKey: "apps" },
+  gmail: { endpoint: "/apps/gmail/install-url", queryKey: "inboxAccounts" },
+  outlook: { endpoint: "/apps/outlook/install-url", queryKey: "inboxAccounts" },
+  xero: { endpoint: "/apps/xero/install-url", queryKey: "apps" },
+  quickbooks: { endpoint: "/apps/quickbooks/install-url", queryKey: "apps" },
+  fortnox: { endpoint: "/apps/fortnox/install-url", queryKey: "apps" },
+  "stripe-payments": {
+    endpoint: "/invoice-payments/connect-stripe",
+    queryKey: "stripeStatus",
+  },
+};
 
 interface UnifiedAppProps {
   app: UnifiedApp;
@@ -97,6 +118,33 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
     settings: parseAsBoolean,
   });
 
+  // Get OAuth config for this app (if it's an OAuth app)
+  const oauthConfig = oauthAppConfig[app.id];
+
+  // Use hook for OAuth apps
+  const appOAuth = useAppOAuth({
+    installUrlEndpoint: oauthConfig?.endpoint ?? "",
+    onSuccess: () => {
+      if (oauthConfig?.queryKey === "inboxAccounts") {
+        queryClient.invalidateQueries({
+          queryKey: trpc.inboxAccounts.get.queryKey(),
+        });
+      } else if (oauthConfig?.queryKey === "stripeStatus") {
+        queryClient.invalidateQueries({
+          queryKey: trpc.invoicePayments.stripeStatus.queryKey(),
+        });
+      } else {
+        queryClient.invalidateQueries({
+          queryKey: trpc.apps.get.queryKey(),
+        });
+      }
+      setLoading(false);
+    },
+    onError: () => {
+      setLoading(false);
+    },
+  });
+
   const disconnectOfficialAppMutation = useMutation(
     trpc.apps.disconnect.mutationOptions({
       onSuccess: () => {
@@ -117,7 +165,49 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
     }),
   );
 
+  // Mutation to disconnect inbox accounts (Gmail/Outlook)
+  const disconnectInboxAccountMutation = useMutation(
+    trpc.inboxAccounts.delete.mutationOptions({
+      onSuccess: () => {
+        queryClient.invalidateQueries({
+          queryKey: trpc.inboxAccounts.get.queryKey(),
+        });
+      },
+    }),
+  );
+
+  // Mutation to disconnect Stripe Payments
+  const disconnectStripeMutation = useMutation(
+    trpc.invoicePayments.disconnectStripe.mutationOptions({
+      onSuccess: () => {
+        queryClient.invalidateQueries({
+          queryKey: trpc.invoicePayments.stripeStatus.queryKey(),
+        });
+      },
+    }),
+  );
+
+  // Computed loading states
+  const isInstalling = isLoading || appOAuth.isLoading;
+  const isDisconnecting =
+    disconnectOfficialAppMutation.isPending ||
+    revokeExternalAppMutation.isPending ||
+    disconnectInboxAccountMutation.isPending ||
+    disconnectStripeMutation.isPending;
+
   const handleDisconnect = () => {
+    // Gmail and Outlook use inbox_accounts table
+    if ((app.id === "gmail" || app.id === "outlook") && app.inboxAccountId) {
+      disconnectInboxAccountMutation.mutate({ id: app.inboxAccountId });
+      return;
+    }
+
+    // Stripe Payments uses team.stripeAccountId
+    if (app.id === "stripe-payments") {
+      disconnectStripeMutation.mutate();
+      return;
+    }
+
     if (app.type === "official") {
       disconnectOfficialAppMutation.mutate({ appId: app.id });
     } else {
@@ -129,17 +219,52 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
     setLoading(true);
 
     try {
-      if (app.type === "official" && app.onInitialize) {
-        await app.onInitialize();
-      } else if (app.type === "external" && app.installUrl) {
-        // Open the install URL for the OAuth application
+      // Use OAuth hook for configured apps
+      if (oauthConfig) {
+        await appOAuth.connect();
+        return;
+      }
+
+      // Handle apps with installUrl (like Midday Desktop download page)
+      if (app.installUrl) {
         if (isDesktopApp()) {
           openUrl(app.installUrl);
         } else {
           window.open(app.installUrl, "_blank");
         }
+        setLoading(false);
+        return;
       }
-    } finally {
+
+      if (app.onInitialize) {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session?.access_token) {
+          throw new Error("Not authenticated");
+        }
+
+        // Set up a timeout to clear loading state if callback doesn't fire
+        const timeoutId = setTimeout(() => {
+          setLoading(false);
+        }, 30000); // 30 second timeout as fallback
+
+        await app.onInitialize({
+          accessToken: session.access_token,
+          onComplete: () => {
+            clearTimeout(timeoutId);
+            // Invalidate queries to refresh the app status
+            // Note: The global listener in Apps component also handles this as a fallback
+            queryClient.invalidateQueries({
+              queryKey: trpc.apps.get.queryKey(),
+            });
+            setLoading(false);
+          },
+        });
+      }
+    } catch (error) {
       setLoading(false);
     }
   };
@@ -175,6 +300,11 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
                 Coming soon
               </span>
             )}
+            {app.active && app.beta && (
+              <span className="text-[#1D1D1D] bg-[#e6e6e6] text-[10px] dark:bg-[#2c2c2c] dark:text-[#F2F1EF] px-3 py-1 rounded-full font-mono">
+                Beta
+              </span>
+            )}
           </div>
         </CardHeader>
         <CardContent className="text-xs text-[#878787] pb-4">
@@ -182,39 +312,47 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
         </CardContent>
 
         <div className="px-6 pb-6 flex gap-2 mt-auto">
-          <Button
-            variant="outline"
-            className="w-full"
-            disabled={!app.active}
-            onClick={() => setParams({ app: app.id })}
-          >
-            Details
-          </Button>
-
-          {app.installed ? (
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={handleDisconnect}
-              disabled={
-                disconnectOfficialAppMutation.isPending ||
-                revokeExternalAppMutation.isPending
-              }
-            >
-              {disconnectOfficialAppMutation.isPending ||
-              revokeExternalAppMutation.isPending
-                ? "Disconnecting..."
-                : "Disconnect"}
-            </Button>
-          ) : (
+          {app.installUrl ? (
             <Button
               variant="outline"
               className="w-full"
               onClick={handleOnInitialize}
-              disabled={!app.active || isLoading}
+              disabled={!app.active}
             >
-              {isLoading ? "Installing..." : "Install"}
+              Download
             </Button>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={!app.active}
+                onClick={() => setParams({ app: app.id })}
+              >
+                Details
+              </Button>
+
+              {app.installed ? (
+                <SubmitButton
+                  variant="outline"
+                  className="w-full"
+                  onClick={handleDisconnect}
+                  isSubmitting={isDisconnecting}
+                >
+                  Disconnect
+                </SubmitButton>
+              ) : (
+                <SubmitButton
+                  variant="outline"
+                  className="w-full"
+                  onClick={handleOnInitialize}
+                  disabled={!app.active}
+                  isSubmitting={isInstalling}
+                >
+                  Install
+                </SubmitButton>
+              )}
+            </>
           )}
         </div>
 
@@ -229,7 +367,6 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
                     width={465}
                     height={290}
                     quality={100}
-                    className="rounded-lg"
                   />
                 ) : (
                   <CarouselWithDots images={app.images} appName={app.name} />
@@ -269,29 +406,24 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
 
               <div>
                 {app.installed ? (
-                  <Button
+                  <SubmitButton
                     variant="outline"
                     className="w-full"
                     onClick={handleDisconnect}
-                    disabled={
-                      disconnectOfficialAppMutation.isPending ||
-                      revokeExternalAppMutation.isPending
-                    }
+                    isSubmitting={isDisconnecting}
                   >
-                    {disconnectOfficialAppMutation.isPending ||
-                    revokeExternalAppMutation.isPending
-                      ? "Disconnecting..."
-                      : "Disconnect"}
-                  </Button>
+                    Disconnect
+                  </SubmitButton>
                 ) : (
-                  <Button
+                  <SubmitButton
                     variant="outline"
                     className="w-full border-primary"
                     onClick={handleOnInitialize}
-                    disabled={!app.active || isLoading}
+                    disabled={!app.active}
+                    isSubmitting={isInstalling}
                   >
-                    {isLoading ? "Installing..." : "Install"}
-                  </Button>
+                    {app.installUrl ? "Download" : "Install"}
+                  </SubmitButton>
                 )}
               </div>
             </div>
@@ -308,8 +440,10 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
                 >
                   <AccordionItem value="description" className="border-none">
                     <AccordionTrigger>How it works</AccordionTrigger>
-                    <AccordionContent className="text-[#878787] text-sm">
-                      {app.description || app.overview}
+                    <AccordionContent className="text-[#878787] text-sm prose prose-sm prose-invert prose-p:text-[#878787] prose-p:my-3 [&_strong]:text-primary [&_strong]:font-normal max-w-none">
+                      <MemoizedReactMarkdown>
+                        {app.description || app.overview || ""}
+                      </MemoizedReactMarkdown>
                     </AccordionContent>
                   </AccordionItem>
 

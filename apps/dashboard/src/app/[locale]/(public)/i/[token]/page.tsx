@@ -1,5 +1,4 @@
-import CustomerHeader from "@/components/customer-header";
-import InvoiceToolbar from "@/components/invoice-toolbar";
+import { InvoiceViewWrapper } from "@/components/invoice-view-wrapper";
 import { getQueryClient, trpc } from "@/trpc/server";
 import { decrypt } from "@midday/encryption";
 import { HtmlTemplate } from "@midday/invoice/templates/html";
@@ -83,7 +82,8 @@ export default async function Page(props: Props) {
   const params = await props.params;
   const supabase = await createClient({ admin: true });
   const searchParams = await props.searchParams;
-  const viewer = decodeURIComponent(searchParams?.viewer as string);
+  const viewerParam = searchParams?.viewer as string | undefined;
+  const viewer = viewerParam ? decodeURIComponent(viewerParam) : undefined;
 
   const {
     data: { session },
@@ -101,7 +101,7 @@ export default async function Page(props: Props) {
     notFound();
   }
 
-  if (viewer) {
+  if (viewer && viewer.trim().length > 0) {
     try {
       const decryptedEmail = decrypt(viewer);
 
@@ -110,7 +110,8 @@ export default async function Page(props: Props) {
         waitUntil(updateInvoiceViewedAt(invoice.id!));
       }
     } catch (error) {
-      console.log(error);
+      // Silently fail if decryption fails - viewer might be invalid or malformed
+      // This is expected when accessing the invoice without a valid viewer parameter
     }
   }
 
@@ -128,22 +129,25 @@ export default async function Page(props: Props) {
         className="flex flex-col w-full max-w-full py-6"
         style={{ maxWidth: width }}
       >
-        <CustomerHeader
-          name={invoice.customerName || (invoice.customer?.name as string)}
-          website={invoice.customer?.website}
-          status={invoice.status}
-        />
-        <div className="pb-24 md:pb-0">
-          <div className="shadow-[0_24px_48px_-12px_rgba(0,0,0,0.3)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.6)]">
-            <HtmlTemplate data={invoice} width={width} height={height} />
+        <InvoiceViewWrapper
+          token={invoice.token}
+          invoiceNumber={invoice.invoiceNumber || "invoice"}
+          paymentEnabled={invoice.template.paymentEnabled}
+          amount={invoice.amount ?? undefined}
+          currency={invoice.currency ?? undefined}
+          initialStatus={invoice.status}
+          customerName={
+            invoice.customerName || (invoice.customer?.name as string)
+          }
+          customerWebsite={invoice.customer?.website}
+        >
+          <div className="pb-24 md:pb-0">
+            <div className="shadow-[0_24px_48px_-12px_rgba(0,0,0,0.3)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.6)]">
+              <HtmlTemplate data={invoice} width={width} height={height} />
+            </div>
           </div>
-        </div>
+        </InvoiceViewWrapper>
       </div>
-
-      <InvoiceToolbar
-        token={invoice.token}
-        invoiceNumber={invoice.invoiceNumber || "invoice"}
-      />
 
       <div className="fixed bottom-4 right-4 hidden md:block">
         <a

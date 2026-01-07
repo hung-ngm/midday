@@ -6,12 +6,27 @@ import {
   users,
   usersOnTeam,
 } from "@db/schema";
+import { teamPermissionsCache } from "@midday/cache/team-permissions-cache";
 import {
   CATEGORIES,
   getTaxRateForCategory,
   getTaxTypeForCountry,
 } from "@midday/categories";
 import { and, eq } from "drizzle-orm";
+
+export const hasTeamAccess = async (
+  db: Database,
+  teamId: string,
+  userId: string,
+): Promise<boolean> => {
+  const result = await db
+    .select({ teamId: usersOnTeam.teamId })
+    .from(usersOnTeam)
+    .where(and(eq(usersOnTeam.teamId, teamId), eq(usersOnTeam.userId, userId)))
+    .limit(1);
+
+  return result.length > 0;
+};
 
 export const getTeamById = async (db: Database, id: string) => {
   const [result] = await db
@@ -25,9 +40,53 @@ export const getTeamById = async (db: Database, id: string) => {
       // subscriptionStatus: teams.subscriptionStatus,
       baseCurrency: teams.baseCurrency,
       countryCode: teams.countryCode,
+      fiscalYearStartMonth: teams.fiscalYearStartMonth,
+      exportSettings: teams.exportSettings,
+      stripeAccountId: teams.stripeAccountId,
+      stripeConnectStatus: teams.stripeConnectStatus,
     })
     .from(teams)
     .where(eq(teams.id, id));
+
+  return result;
+};
+
+export const getTeamByInboxId = async (db: Database, inboxId: string) => {
+  const [result] = await db
+    .select({
+      id: teams.id,
+      name: teams.name,
+      email: teams.email,
+    })
+    .from(teams)
+    .where(eq(teams.inboxId, inboxId))
+    .limit(1);
+
+  return result;
+};
+
+/**
+ * Get a team by their Stripe Connect account ID.
+ * Used by webhooks to find which team a connected account belongs to.
+ *
+ * @param db - Database instance
+ * @param stripeAccountId - The Stripe connected account ID (acct_xxx)
+ * @returns The team if found, undefined otherwise
+ */
+export const getTeamByStripeAccountId = async (
+  db: Database,
+  stripeAccountId: string,
+) => {
+  const [result] = await db
+    .select({
+      id: teams.id,
+      name: teams.name,
+      stripeAccountId: teams.stripeAccountId,
+      stripeConnectStatus: teams.stripeConnectStatus,
+    })
+    .from(teams)
+    .where(eq(teams.stripeAccountId, stripeAccountId))
+    .limit(1);
 
   return result;
 };
@@ -57,6 +116,7 @@ export const updateTeamById = async (
       // subscriptionStatus: teams.subscriptionStatus,
       baseCurrency: teams.baseCurrency,
       countryCode: teams.countryCode,
+      fiscalYearStartMonth: teams.fiscalYearStartMonth,
     });
 
   return result;
@@ -68,6 +128,7 @@ type CreateTeamParams = {
   email: string;
   baseCurrency?: string;
   countryCode?: string;
+  fiscalYearStartMonth?: number | null;
   logoUrl?: string;
   switchTeam?: boolean;
 };
@@ -152,45 +213,125 @@ async function createSystemCategoriesForTeam(
 }
 
 export const createTeam = async (db: Database, params: CreateTeamParams) => {
-  try {
-    const [newTeam] = await db
-      .insert(teams)
-      .values({
-        name: params.name,
-        baseCurrency: params.baseCurrency,
-        countryCode: params.countryCode,
-        logoUrl: params.logoUrl,
-        email: params.email,
-      })
-      .returning({ id: teams.id });
+  const startTime = Date.now();
+  const teamCreationId = `team_creation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    if (!newTeam?.id) {
-      throw new Error("Failed to create team.");
+  console.log(
+    `[${teamCreationId}] Starting team creation for user ${params.userId}`,
+    {
+      teamName: params.name,
+      baseCurrency: params.baseCurrency,
+      countryCode: params.countryCode,
+      email: params.email,
+      switchTeam: params.switchTeam,
+      timestamp: new Date().toISOString(),
+    },
+  );
+
+  // Use transaction to ensure atomicity and prevent race conditions
+  const teamId = await db.transaction(async (tx) => {
+    try {
+      // Check if user already has teams to prevent duplicate creation
+      const existingTeams = await tx
+        .select({ id: teams.id, name: teams.name })
+        .from(usersOnTeam)
+        .innerJoin(teams, eq(teams.id, usersOnTeam.teamId))
+        .where(eq(usersOnTeam.userId, params.userId));
+
+      console.log(
+        `[${teamCreationId}] User existing teams count: ${existingTeams.length}`,
+        {
+          existingTeams: existingTeams.map((t) => ({ id: t.id, name: t.name })),
+        },
+      );
+
+      // Create the team
+      console.log(`[${teamCreationId}] Creating team record`);
+      const [newTeam] = await tx
+        .insert(teams)
+        .values({
+          name: params.name,
+          baseCurrency: params.baseCurrency,
+          countryCode: params.countryCode,
+          fiscalYearStartMonth: params.fiscalYearStartMonth,
+          logoUrl: params.logoUrl,
+          email: params.email,
+        })
+        .returning({ id: teams.id });
+
+      if (!newTeam?.id) {
+        throw new Error("Failed to create team.");
+      }
+
+      console.log(
+        `[${teamCreationId}] Team created successfully with ID: ${newTeam.id}`,
+      );
+
+      // Add user to team membership (atomic with team creation)
+      console.log(`[${teamCreationId}] Adding user to team membership`);
+      await tx.insert(usersOnTeam).values({
+        userId: params.userId,
+        teamId: newTeam.id,
+        role: "owner",
+      });
+
+      // Create system categories for the new team (atomic)
+      console.log(`[${teamCreationId}] Creating system categories`);
+      // @ts-expect-error - tx is a PgTransaction
+      await createSystemCategoriesForTeam(tx, newTeam.id, params.countryCode);
+
+      // Optionally switch user to the new team (atomic)
+      if (params.switchTeam) {
+        console.log(`[${teamCreationId}] Switching user to new team`);
+        await tx
+          .update(users)
+          .set({ teamId: newTeam.id })
+          .where(eq(users.id, params.userId));
+      }
+
+      const duration = Date.now() - startTime;
+      console.log(
+        `[${teamCreationId}] Team creation completed successfully in ${duration}ms`,
+        {
+          teamId: newTeam.id,
+          duration,
+        },
+      );
+
+      return newTeam.id;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.error(
+        `[${teamCreationId}] Team creation failed after ${duration}ms:`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          params: {
+            userId: params.userId,
+            teamName: params.name,
+            baseCurrency: params.baseCurrency,
+            countryCode: params.countryCode,
+          },
+          duration,
+        },
+      );
+
+      // Re-throw with more specific error messages
+      if (error instanceof Error) {
+        throw error;
+      }
+
+      throw new Error("Failed to create team due to an unexpected error.");
     }
+  });
 
-    // Add user to team membership
-    await db.insert(usersOnTeam).values({
-      userId: params.userId,
-      teamId: newTeam.id,
-      role: "owner",
-    });
-
-    // Create system categories for the new team
-    await createSystemCategoriesForTeam(db, newTeam.id, params.countryCode);
-
-    // Optionally switch user to the new team
-    if (params.switchTeam) {
-      await db
-        .update(users)
-        .set({ teamId: newTeam.id })
-        .where(eq(users.id, params.userId));
-    }
-
-    return newTeam.id;
-  } catch (error) {
-    console.error(error);
-    throw new Error("Failed to create team.");
+  // If team switching was enabled, invalidate the team permissions cache
+  if (params.switchTeam) {
+    const cacheKey = `user:${params.userId}:team`;
+    await teamPermissionsCache.delete(cacheKey);
   }
+
+  return teamId;
 };
 
 export async function getTeamMembers(db: Database, teamId: string) {
@@ -226,6 +367,12 @@ type LeaveTeamParams = {
 };
 
 export async function leaveTeam(db: Database, params: LeaveTeamParams) {
+  // First verify the user is actually a member of this team
+  const hasAccess = await hasTeamAccess(db, params.teamId, params.userId);
+  if (!hasAccess) {
+    throw new Error("User is not a member of this team");
+  }
+
   // Set team_id to null for the user
   await db
     .update(users)
@@ -243,13 +390,31 @@ export async function leaveTeam(db: Database, params: LeaveTeamParams) {
     )
     .returning();
 
+  // Invalidate the team permissions cache since teamId was set to null
+  const cacheKey = `user:${params.userId}:team`;
+  await teamPermissionsCache.delete(cacheKey);
+
   return deleted;
 }
 
-export async function deleteTeam(db: Database, id: string) {
-  const [result] = await db.delete(teams).where(eq(teams.id, id)).returning({
-    id: teams.id,
-  });
+type DeleteTeamParams = {
+  teamId: string;
+  userId: string;
+};
+
+export async function deleteTeam(db: Database, params: DeleteTeamParams) {
+  // First verify the user is actually a member of this team
+  const hasAccess = await hasTeamAccess(db, params.teamId, params.userId);
+  if (!hasAccess) {
+    throw new Error("User is not a member of this team");
+  }
+
+  const [result] = await db
+    .delete(teams)
+    .where(eq(teams.id, params.teamId))
+    .returning({
+      id: teams.id,
+    });
 
   return result;
 }
@@ -263,6 +428,12 @@ export async function deleteTeamMember(
   db: Database,
   params: DeleteTeamMemberParams,
 ) {
+  // First verify the user is actually a member of this team
+  const hasAccess = await hasTeamAccess(db, params.teamId, params.userId);
+  if (!hasAccess) {
+    throw new Error("User is not a member of this team");
+  }
+
   const [deleted] = await db
     .delete(usersOnTeam)
     .where(
@@ -287,6 +458,12 @@ export async function updateTeamMember(
   params: UpdateTeamMemberParams,
 ) {
   const { userId, teamId, role } = params;
+
+  // First verify the user is actually a member of this team
+  const hasAccess = await hasTeamAccess(db, teamId, userId);
+  if (!hasAccess) {
+    throw new Error("User is not a member of this team");
+  }
 
   const [updated] = await db
     .update(usersOnTeam)

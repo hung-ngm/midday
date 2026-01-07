@@ -1,3 +1,6 @@
+// Import Sentry instrumentation first, before any other modules
+import "./instrument";
+
 import { trpcServer } from "@hono/trpc-server";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { Scalar } from "@scalar/hono-api-reference";
@@ -7,11 +10,16 @@ import { routers } from "./rest/routers";
 import type { Context } from "./rest/types";
 import { createTRPCContext } from "./trpc/init";
 import { appRouter } from "./trpc/routers/_app";
-import { checkHealth } from "./utils/health";
+import { httpLogger } from "./utils/logger";
 
 const app = new OpenAPIHono<Context>();
 
-app.use(secureHeaders());
+app.use(httpLogger());
+app.use(
+  secureHeaders({
+    crossOriginResourcePolicy: "cross-origin",
+  }),
+);
 
 app.use(
   "*",
@@ -21,13 +29,23 @@ app.use(
     allowHeaders: [
       "Authorization",
       "Content-Type",
+      "User-Agent",
       "accept-language",
       "x-trpc-source",
       "x-user-locale",
       "x-user-timezone",
       "x-user-country",
+      "x-force-primary",
+      // Slack webhook headers
+      "x-slack-signature",
+      "x-slack-request-timestamp",
     ],
-    exposeHeaders: ["Content-Length"],
+    exposeHeaders: [
+      "Content-Length",
+      "Content-Type",
+      "Cache-Control",
+      "Cross-Origin-Resource-Policy",
+    ],
     maxAge: 86400,
   }),
 );
@@ -40,20 +58,8 @@ app.use(
   }),
 );
 
-app.get("/health", async (c) => {
-  try {
-    await checkHealth();
-
-    return c.json({ status: "ok" }, 200);
-  } catch (error) {
-    return c.json(
-      {
-        status: "error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      500,
-    );
-  }
+app.get("/health", (c) => {
+  return c.json({ status: "ok" }, 200);
 });
 
 app.doc("/openapi", {
@@ -106,4 +112,5 @@ export default {
   port: process.env.PORT ? Number.parseInt(process.env.PORT) : 3000,
   fetch: app.fetch,
   host: "::", // Listen on all interfaces
+  idleTimeout: 60,
 };

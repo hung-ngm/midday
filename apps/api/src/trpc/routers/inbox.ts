@@ -1,8 +1,12 @@
 import {
   confirmMatchSchema,
+  createInboxBlocklistSchema,
   createInboxItemSchema,
   declineMatchSchema,
+  deleteInboxBlocklistSchema,
+  deleteInboxManySchema,
   deleteInboxSchema,
+  getInboxBlocklistSchema,
   getInboxByIdSchema,
   getInboxByStatusSchema,
   getInboxSchema,
@@ -15,12 +19,17 @@ import {
 } from "@api/schemas/inbox";
 import { createTRPCRouter, protectedProcedure } from "@api/trpc/init";
 import {
+  checkInboxAttachments,
   confirmSuggestedMatch,
   createInbox,
+  createInboxBlocklist,
   declineSuggestedMatch,
   deleteInbox,
+  deleteInboxBlocklist,
   deleteInboxEmbedding,
+  deleteInboxMany,
   getInbox,
+  getInboxBlocklist,
   getInboxById,
   getInboxByStatus,
   getInboxSearch,
@@ -28,8 +37,9 @@ import {
   unmatchTransaction,
   updateInbox,
 } from "@midday/db/queries";
-import type { ProcessAttachmentPayload } from "@midday/jobs/schema";
-import { tasks } from "@trigger.dev/sdk";
+import { triggerJob } from "@midday/job-client";
+import { logger } from "@midday/logger";
+import { remove } from "@midday/supabase/storage";
 
 export const inboxRouter = createTRPCRouter({
   get: protectedProcedure
@@ -50,19 +60,84 @@ export const inboxRouter = createTRPCRouter({
       });
     }),
 
+  checkAttachments: protectedProcedure
+    .input(deleteInboxSchema)
+    .query(async ({ ctx: { db, teamId }, input }) => {
+      return checkInboxAttachments(db, {
+        id: input.id,
+        teamId: teamId!,
+      });
+    }),
+
   delete: protectedProcedure
     .input(deleteInboxSchema)
-    .mutation(async ({ ctx: { db, teamId }, input }) => {
-      await Promise.all([
-        deleteInboxEmbedding(db, {
-          inboxId: input.id,
-          teamId: teamId!,
-        }),
-        deleteInbox(db, {
-          id: input.id,
-          teamId: teamId!,
-        }),
-      ]);
+    .mutation(async ({ ctx: { db, supabase, teamId }, input }) => {
+      // Delete inbox item and get filePath for storage cleanup
+      const result = await deleteInbox(db, {
+        id: input.id,
+        teamId: teamId!,
+      });
+
+      // Delete file from storage if filePath exists
+      if (result?.filePath && result.filePath.length > 0) {
+        try {
+          await remove(supabase, {
+            bucket: "vault",
+            path: result.filePath,
+          });
+        } catch (error) {
+          // Log error but don't fail the deletion if file doesn't exist in storage
+          console.error("Failed to delete file from storage:", error);
+        }
+      }
+
+      // Delete embedding
+      await deleteInboxEmbedding(db, {
+        inboxId: input.id,
+        teamId: teamId!,
+      });
+    }),
+
+  deleteMany: protectedProcedure
+    .input(deleteInboxManySchema)
+    .mutation(async ({ ctx: { db, supabase, teamId }, input }) => {
+      // Delete inbox items and get filePaths for storage cleanup
+      const results = await deleteInboxMany(db, {
+        ids: input,
+        teamId: teamId!,
+      });
+
+      // Delete files from storage and embeddings
+      for (const result of results) {
+        // Delete file from storage if filePath exists
+        if (result?.filePath && result.filePath.length > 0) {
+          try {
+            await remove(supabase, {
+              bucket: "vault",
+              path: result.filePath,
+            });
+          } catch (error) {
+            // Log error but don't fail the deletion if file doesn't exist in storage
+            console.error(
+              `Failed to delete file from storage for ${result.id}:`,
+              error,
+            );
+          }
+        }
+
+        // Delete embedding
+        try {
+          await deleteInboxEmbedding(db, {
+            inboxId: result.id,
+            teamId: teamId!,
+          });
+        } catch (error) {
+          // Log error but continue with other items
+          console.error(`Failed to delete embedding for ${result.id}:`, error);
+        }
+      }
+
+      return results;
     }),
 
   create: protectedProcedure
@@ -82,27 +157,51 @@ export const inboxRouter = createTRPCRouter({
   processAttachments: protectedProcedure
     .input(processAttachmentsSchema)
     .mutation(async ({ ctx: { teamId }, input }) => {
-      const batchResult = await tasks.batchTrigger(
-        "process-attachment",
-        input.map((item) => ({
-          payload: {
-            filePath: item.filePath,
-            mimetype: item.mimetype,
-            size: item.size,
-            teamId: teamId!,
-          },
-        })) as { payload: ProcessAttachmentPayload }[],
+      const jobResults = await Promise.all(
+        input.map((item) =>
+          triggerJob(
+            "process-attachment",
+            {
+              filePath: item.filePath,
+              mimetype: item.mimetype,
+              size: item.size,
+              teamId: teamId!,
+              referenceId: item.referenceId,
+              website: item.website,
+              senderEmail: item.senderEmail,
+              inboxAccountId: item.inboxAccountId,
+            },
+            "inbox",
+          ),
+        ),
       );
 
       // Send notification for user uploads
-      await tasks.trigger("notification", {
-        type: "inbox_new",
-        teamId: teamId!,
-        totalCount: input.length,
-        inboxType: "upload",
-      });
+      // This is a non-critical operation, so we don't await it
+      if (input.length > 0) {
+        try {
+          await triggerJob(
+            "notification",
+            {
+              type: "inbox_new",
+              teamId: teamId!,
+              totalCount: input.length,
+              inboxType: "upload",
+            },
+            "notifications",
+          );
+        } catch (error) {
+          // Don't fail the entire process if notification fails
+          logger.warn("Failed to trigger inbox_new notification", {
+            teamId: teamId!,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      }
 
-      return batchResult;
+      return {
+        jobs: jobResults.map((result) => ({ id: result.id })),
+      };
     }),
 
   search: protectedProcedure
@@ -179,11 +278,45 @@ export const inboxRouter = createTRPCRouter({
   retryMatching: protectedProcedure
     .input(retryMatchingSchema)
     .mutation(async ({ ctx: { teamId }, input }) => {
-      const result = await tasks.trigger("batch-process-matching", {
-        teamId: teamId!,
-        inboxIds: [input.id],
-      });
+      const result = await triggerJob(
+        "batch-process-matching",
+        {
+          teamId: teamId!,
+          inboxIds: [input.id],
+        },
+        "inbox",
+      );
 
       return { jobId: result.id };
     }),
+
+  // Blocklist management
+  blocklist: createTRPCRouter({
+    get: protectedProcedure
+      .input(getInboxBlocklistSchema)
+      .query(async ({ ctx: { db, teamId } }) => {
+        return getInboxBlocklist(db, {
+          teamId: teamId!,
+        });
+      }),
+
+    create: protectedProcedure
+      .input(createInboxBlocklistSchema)
+      .mutation(async ({ ctx: { db, teamId }, input }) => {
+        return createInboxBlocklist(db, {
+          teamId: teamId!,
+          type: input.type,
+          value: input.value,
+        });
+      }),
+
+    delete: protectedProcedure
+      .input(deleteInboxBlocklistSchema)
+      .mutation(async ({ ctx: { db, teamId }, input }) => {
+        return deleteInboxBlocklist(db, {
+          id: input.id,
+          teamId: teamId!,
+        });
+      }),
+  }),
 });

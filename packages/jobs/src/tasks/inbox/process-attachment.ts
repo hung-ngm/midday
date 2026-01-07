@@ -3,9 +3,11 @@ import { processAttachmentSchema } from "@jobs/schema";
 import {
   createInbox,
   getInboxByFilePath,
+  groupRelatedInboxItems,
   updateInbox,
   updateInboxWithProcessedData,
 } from "@midday/db/queries";
+import { getTeamById } from "@midday/db/queries";
 import { DocumentClient } from "@midday/documents";
 import { createClient } from "@midday/supabase/job";
 import { logger, schemaTask, tasks } from "@trigger.dev/sdk";
@@ -34,6 +36,7 @@ export const processAttachment = schemaTask({
     filePath,
     referenceId,
     website,
+    senderEmail,
     inboxAccountId,
   }) => {
     const supabase = createClient();
@@ -74,14 +77,38 @@ export const processAttachment = schemaTask({
         size,
         referenceId,
         website,
+        senderEmail,
         inboxAccountId,
         status: "processing", // Set as processing when created by job
       });
-    } else if (inboxData.status === "processing") {
-      logger.info("Found existing inbox item already in processing status", {
-        inboxId: inboxData.id,
-        filePath: filePath.join("/"),
-      });
+    } else if (
+      inboxData.status === "processing" ||
+      inboxData.status === "new"
+    ) {
+      // Check if item is stuck (processing for more than 5 minutes)
+      const STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+      const createdAt = inboxData.createdAt
+        ? new Date(inboxData.createdAt).getTime()
+        : null;
+      const now = Date.now();
+      const isStuck = createdAt && now - createdAt > STUCK_THRESHOLD_MS;
+
+      if (isStuck) {
+        logger.warn("Found stuck inbox item, recovering", {
+          inboxId: inboxData.id,
+          filePath: filePath.join("/"),
+          status: inboxData.status,
+          ageMinutes: createdAt ? Math.round((now - createdAt) / 60000) : null,
+        });
+        // Reset status to allow processing to continue
+        // The status will be updated to "analyzing" during processing
+      } else {
+        logger.info("Found existing inbox item in processing status", {
+          inboxId: inboxData.id,
+          filePath: filePath.join("/"),
+          status: inboxData.status,
+        });
+      }
     } else {
       logger.info("Found existing inbox item with status", {
         inboxId: inboxData.id,
@@ -103,17 +130,22 @@ export const processAttachment = schemaTask({
     }
 
     try {
+      // Fetch team data to provide context for OCR extraction
+      const teamData = await getTeamById(getDb(), teamId);
+
       const document = new DocumentClient();
 
       logger.info("Starting document processing", {
         inboxId: inboxData.id,
         mimetype,
         referenceId,
+        teamName: teamData?.name,
       });
 
       const result = await document.getInvoiceOrReceipt({
         documentUrl: data?.signedUrl,
         mimetype,
+        companyName: teamData?.name,
       });
 
       logger.info("Document processing completed", {
@@ -124,17 +156,32 @@ export const processAttachment = schemaTask({
 
       await updateInboxWithProcessedData(getDb(), {
         id: inboxData.id,
-        amount: result.amount,
-        currency: result.currency,
-        displayName: result.name,
-        website: result.website,
-        date: result.date,
-        taxAmount: result.tax_amount,
-        taxRate: result.tax_rate,
-        taxType: result.tax_type,
+        amount: result.amount ?? undefined,
+        currency: result.currency ?? undefined,
+        displayName: result.name ?? undefined,
+        website: result.website ?? undefined,
+        date: result.date ?? undefined,
+        taxAmount: result.tax_amount ?? undefined,
+        taxRate: result.tax_rate ?? undefined,
+        taxType: result.tax_type ?? undefined,
         type: result.type as "invoice" | "expense" | null | undefined,
+        invoiceNumber: result.invoice_number ?? undefined,
         status: "analyzing", // Keep analyzing until matching is complete
       });
+
+      // Group related inbox items after storing invoice number
+      try {
+        await groupRelatedInboxItems(getDb(), {
+          inboxId: inboxData.id,
+          teamId,
+        });
+      } catch (error) {
+        logger.error("Failed to group related inbox items", {
+          inboxId: inboxData.id,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+        // Don't fail the entire process if grouping fails
+      }
 
       // NOTE: Process documents and images for classification
       await processDocument.trigger({

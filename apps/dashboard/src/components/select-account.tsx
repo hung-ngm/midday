@@ -4,7 +4,9 @@ import {
   ComboboxDropdown,
   type ComboboxItem,
 } from "@midday/ui/combobox-dropdown";
+import type { PopoverContent } from "@midday/ui/popover";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type React from "react";
 import { useEffect, useState } from "react";
 import { TransactionBankAccount } from "./transaction-bank-account";
 
@@ -21,9 +23,17 @@ type Props = {
   className?: string;
   value?: string;
   onChange: (value: SelectedItem) => void;
+  popoverProps?: React.ComponentProps<typeof PopoverContent>;
+  modal?: boolean;
 };
 
-export function SelectAccount({ placeholder, onChange, value }: Props) {
+export function SelectAccount({
+  placeholder,
+  onChange,
+  value,
+  popoverProps,
+  modal,
+}: Props) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null);
@@ -95,6 +105,8 @@ export function SelectAccount({ placeholder, onChange, value }: Props) {
       onCreate={(name) => {
         createBankAccountMutation.mutate({ name, manual: true });
       }}
+      popoverProps={popoverProps}
+      modal={modal}
       renderSelectedItem={(selectedItem) => {
         return (
           <TransactionBankAccount

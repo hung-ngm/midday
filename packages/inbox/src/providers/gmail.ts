@@ -78,12 +78,12 @@ export class GmailProvider implements OAuthProviderInterface {
     this.#accountId = accountId;
   }
 
-  async getAuthUrl(): Promise<string> {
+  async getAuthUrl(state?: string): Promise<string> {
     return this.#oauth2Client.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
       scope: this.#scopes,
-      state: "gmail",
+      state: state ?? "gmail",
     });
   }
 
@@ -328,10 +328,12 @@ export class GmailProvider implements OAuthProviderInterface {
       (h) => h.name === "From",
     )?.value;
     let senderDomain: string | undefined;
+    let senderEmail: string | undefined;
 
     if (fromHeader) {
       const emailMatch = fromHeader.match(/<([^>]+)>/);
       const email = emailMatch ? emailMatch[1] : fromHeader;
+      senderEmail = email?.includes("@") ? email : undefined;
       const domain = email?.split("@")[1];
 
       // Extract root domain (remove subdomains)
@@ -366,6 +368,7 @@ export class GmailProvider implements OAuthProviderInterface {
           size: att.size,
           data: decodeBase64Url(att.data),
           website: senderDomain,
+          senderEmail: senderEmail,
           referenceId: referenceId,
         };
       });
