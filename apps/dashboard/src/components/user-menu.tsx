@@ -1,6 +1,5 @@
 "use client";
 
-import { useUserQuery } from "@/hooks/use-user";
 import { Avatar, AvatarFallback, AvatarImageNext } from "@midday/ui/avatar";
 import {
   DropdownMenu,
@@ -12,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@midday/ui/dropdown-menu";
 import Link from "next/link";
+import { useUserQuery } from "@/hooks/use-user";
 import { SignOut } from "./sign-out";
 import { ThemeSwitch } from "./theme-switch";
 
@@ -25,7 +25,7 @@ export function UserMenu({ onlySignOut }: Props) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Avatar className="rounded-full w-8 h-8 cursor-pointer">
+        <Avatar className="rounded-full w-8 h-8 cursor-pointer bg-accent">
           {user?.avatarUrl && (
             <AvatarImageNext
               src={user?.avatarUrl}
@@ -61,15 +61,15 @@ export function UserMenu({ onlySignOut }: Props) {
             <DropdownMenuSeparator />
 
             <DropdownMenuGroup>
-              <Link prefetch href="/account">
+              <Link href="/account">
                 <DropdownMenuItem className="text-xs">Account</DropdownMenuItem>
               </Link>
 
-              <Link prefetch href="/account/support">
+              <Link href="/account/support">
                 <DropdownMenuItem className="text-xs">Support</DropdownMenuItem>
               </Link>
 
-              <Link prefetch href="/account/teams">
+              <Link href="/account/teams">
                 <DropdownMenuItem className="text-xs">Teams</DropdownMenuItem>
               </Link>
             </DropdownMenuGroup>

@@ -1,7 +1,7 @@
-import { useUserQuery } from "@/hooks/use-user";
-import { saveAs } from "file-saver";
 import JSZip from "jszip";
 import { useState } from "react";
+import { useUserQuery } from "@/hooks/use-user";
+import { saveFile } from "@/lib/save-file";
 
 type Invoice = {
   id: string;
@@ -81,7 +81,7 @@ export function useDownloadInvoicesZip() {
       });
 
       const timestamp = new Date().toISOString().split("T")[0];
-      saveAs(zipBlob, `invoices-${timestamp}.zip`);
+      await saveFile(zipBlob, `invoices-${timestamp}.zip`);
     } catch (error) {
       console.error("Failed to create invoice ZIP:", error);
       throw error;

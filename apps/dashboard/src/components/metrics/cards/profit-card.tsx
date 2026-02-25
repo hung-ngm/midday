@@ -1,17 +1,17 @@
 "use client";
 
+import { cn } from "@midday/ui/cn";
+import { useQuery } from "@tanstack/react-query";
+import { format, parseISO } from "date-fns";
+import { useMemo, useState } from "react";
 import { AnimatedNumber } from "@/components/animated-number";
+import { formatChartMonth } from "@/components/charts/chart-utils";
 import { ProfitChart } from "@/components/charts/profit-chart";
 import { useLongPress } from "@/hooks/use-long-press";
 import { useMetricsCustomize } from "@/hooks/use-metrics-customize";
-import { useOverviewTab } from "@/hooks/use-overview-tab";
 import { useChatStore } from "@/store/chat";
 import { useTRPC } from "@/trpc/client";
 import { generateChartSelectionMessage } from "@/utils/chart-selection-message";
-import { cn } from "@midday/ui/cn";
-import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { useMemo, useState } from "react";
 import { ShareMetricButton } from "../components/share-metric-button";
 
 interface ProfitCardProps {
@@ -34,7 +34,6 @@ export function ProfitCard({
   revenueType = "net",
 }: ProfitCardProps) {
   const trpc = useTRPC();
-  const { isMetricsTab } = useOverviewTab();
   const { isCustomizing: metricsIsCustomizing, setIsCustomizing } =
     useMetricsCustomize();
   const setInput = useChatStore((state) => state.setInput);
@@ -46,15 +45,14 @@ export function ProfitCard({
     disabled: metricsIsCustomizing || isSelecting,
   });
 
-  const { data: profitData } = useQuery({
-    ...trpc.reports.profit.queryOptions({
+  const { data: profitData } = useQuery(
+    trpc.reports.profit.queryOptions({
       from,
       to,
       currency: currency,
       revenueType,
     }),
-    enabled: isMetricsTab,
-  });
+  );
 
   // Transform profit data
   const profitChartData = useMemo(() => {
@@ -64,8 +62,10 @@ export function ProfitCard({
     const average =
       currentValues.reduce((sum, val) => sum + val, 0) / currentValues.length;
 
+    const totalMonths = profitData.result.length;
+
     return profitData.result.map((item) => ({
-      month: format(new Date(item.current.date), "MMM"),
+      month: formatChartMonth(item.current.date, totalMonths),
       profit: item.current.value,
       lastYearProfit: item.previous.value,
       average,
@@ -76,8 +76,8 @@ export function ProfitCard({
 
   const dateRangeDisplay = useMemo(() => {
     try {
-      const fromDate = new Date(from);
-      const toDate = new Date(to);
+      const fromDate = parseISO(from);
+      const toDate = parseISO(to);
       return `${format(fromDate, "MMM d")} - ${format(toDate, "MMM d, yyyy")}`;
     } catch {
       return "";

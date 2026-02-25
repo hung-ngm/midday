@@ -1,24 +1,37 @@
 "use client";
 
-import { useChatInterface } from "@/hooks/use-chat-interface";
-import { useMetricsFilter } from "@/hooks/use-metrics-filter";
-import { useI18n } from "@/locales/client";
-import { useTRPC } from "@/trpc/client";
 import { useChatActions, useChatId } from "@ai-sdk-tools/store";
 import { Icons } from "@midday/ui/icons";
 import { useQuery } from "@tanstack/react-query";
 import { endOfMonth, format, startOfMonth, subMonths } from "date-fns";
+import { useChatInterface } from "@/hooks/use-chat-interface";
+import { useMetricsFilter } from "@/hooks/use-metrics-filter";
+import { useI18n } from "@/locales/client";
+import { useTRPC } from "@/trpc/client";
 import { PaymentScoreVisualizer } from "../payment-score-visualizer";
 import { BaseWidget } from "./base";
+import { WidgetSkeleton } from "./widget-skeleton";
 
 export function InvoicePaymentScoreWidget() {
   const trpc = useTRPC();
-  const { data } = useQuery(trpc.invoice.paymentStatus.queryOptions());
   const t = useI18n();
   const { sendMessage } = useChatActions();
   const chatId = useChatId();
   const { setChatId } = useChatInterface();
   const { currency } = useMetricsFilter();
+  const { data, isLoading } = useQuery(
+    trpc.invoice.paymentStatus.queryOptions(),
+  );
+
+  if (isLoading) {
+    return (
+      <WidgetSkeleton
+        title="Payment Score"
+        icon={<Icons.Invoice className="size-4" />}
+        descriptionLines={2}
+      />
+    );
+  }
 
   const scorePercentage = data?.score ?? 0;
 

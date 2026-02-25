@@ -1,6 +1,6 @@
 import { protectedMiddleware, publicMiddleware } from "@api/rest/middleware";
 import type { Context } from "@api/rest/types";
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   getInvoiceById,
   getTeamById,
@@ -99,7 +99,7 @@ app.openapi(
       source: "invoice-settings",
     });
 
-    const dashboardUrl =
+    const _dashboardUrl =
       process.env.MIDDAY_DASHBOARD_URL || "https://app.midday.ai";
     const redirectUri = `${process.env.MIDDAY_API_URL || "https://api.midday.ai"}/invoice-payments/connect-stripe/callback`;
 
@@ -246,10 +246,7 @@ app.openapi(
       });
 
       // Redirect to success page
-      return c.redirect(
-        `${dashboardUrl}/all-done?event=app_oauth_completed`,
-        302,
-      );
+      return c.redirect(`${dashboardUrl}/oauth-callback?status=success`, 302);
     } catch (err) {
       logger.error("Stripe Connect OAuth callback error", {
         error: err instanceof Error ? err.message : String(err),

@@ -1,17 +1,18 @@
 "use client";
 
+import { useChatActions, useChatId } from "@ai-sdk-tools/store";
+import { Icons } from "@midday/ui/icons";
+import { useQuery } from "@tanstack/react-query";
+import { format, parseISO } from "date-fns";
+import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { FormatAmount } from "@/components/format-amount";
 import { useChatInterface } from "@/hooks/use-chat-interface";
 import { useMetricsFilter } from "@/hooks/use-metrics-filter";
 import { useTRPC } from "@/trpc/client";
 import { getPeriodLabel } from "@/utils/metrics-date-utils";
-import { useChatActions, useChatId } from "@ai-sdk-tools/store";
-import { Icons } from "@midday/ui/icons";
-import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { BaseWidget } from "./base";
 import { WIDGET_POLLING_CONFIG } from "./widget-config";
+import { WidgetSkeleton } from "./widget-skeleton";
 
 export function RevenueForecastWidget() {
   const trpc = useTRPC();
@@ -22,7 +23,7 @@ export function RevenueForecastWidget() {
 
   const forecastMonths = 6;
 
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     ...trpc.reports.revenueForecast.queryOptions({
       from,
       to,
@@ -32,6 +33,16 @@ export function RevenueForecastWidget() {
     }),
     ...WIDGET_POLLING_CONFIG,
   });
+
+  if (isLoading) {
+    return (
+      <WidgetSkeleton
+        title="Forecast"
+        icon={<Icons.TrendingUp className="size-4" />}
+        descriptionLines={3}
+      />
+    );
+  }
 
   const handleToolCall = (params: {
     toolName: string;
@@ -77,13 +88,13 @@ export function RevenueForecastWidget() {
     ? [
         // Last 6 actual months
         ...data.historical.slice(-6).map((item) => ({
-          month: format(new Date(item.date), "MMM"),
+          month: format(parseISO(item.date), "MMM"),
           value: item.value,
           type: "actual",
         })),
         // All forecast months
         ...data.forecast.map((item) => ({
-          month: format(new Date(item.date), "MMM"),
+          month: format(parseISO(item.date), "MMM"),
           value: item.value,
           type: "forecast",
         })),
@@ -98,12 +109,12 @@ export function RevenueForecastWidget() {
       icon={<Icons.TrendingUp className="size-4" />}
       description={
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-[#878787]">Revenue projection</p>
+          <p className="text-sm text-[#666666]">Revenue projection</p>
 
           {/* Simple trend line chart */}
           {chartData.length > 0 ? (
-            <div className="h-12 w-full">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="w-full">
+              <ResponsiveContainer width="100%" height={48}>
                 <LineChart
                   data={chartData}
                   margin={{ top: 1, right: 0, left: 0, bottom: 1 }}
@@ -115,6 +126,7 @@ export function RevenueForecastWidget() {
                     stroke="hsl(var(--foreground))"
                     strokeWidth={2}
                     dot={false}
+                    activeDot={false}
                   />
                 </LineChart>
               </ResponsiveContainer>

@@ -1,20 +1,6 @@
 "use client";
 
 import {
-  ChatHistoryButton,
-  ChatHistoryDropdown,
-  ChatHistoryProvider,
-  useChatHistoryContext,
-} from "@/components/chat/chat-history";
-import { CommandMenu } from "@/components/chat/command-menu";
-import { RecordButton } from "@/components/chat/record-button";
-import { SuggestedActionsButton } from "@/components/suggested-actions-button";
-import { WebSearchButton } from "@/components/web-search-button";
-import { useChatInterface } from "@/hooks/use-chat-interface";
-import { useOverviewTab } from "@/hooks/use-overview-tab";
-import { useWindowScroll } from "@/hooks/use-window-scroll";
-import { useChatStore } from "@/store/chat";
-import {
   useChatActions,
   useChatId,
   useChatStatus,
@@ -36,6 +22,21 @@ import {
 import { animate, motion, useMotionValue, useTransform } from "framer-motion";
 import { parseAsString, useQueryState } from "nuqs";
 import { useEffect, useRef, useState } from "react";
+import { AudioPlayer } from "@/components/chat/audio-player";
+import {
+  ChatHistoryButton,
+  ChatHistoryDropdown,
+  ChatHistoryProvider,
+  useChatHistoryContext,
+} from "@/components/chat/chat-history";
+import { CommandMenu } from "@/components/chat/command-menu";
+import { RecordButton } from "@/components/chat/record-button";
+import { SuggestedActionsButton } from "@/components/suggested-actions-button";
+import { WebSearchButton } from "@/components/web-search-button";
+import { useChatInterface } from "@/hooks/use-chat-interface";
+import { useOverviewTab } from "@/hooks/use-overview-tab";
+import { useWindowScroll } from "@/hooks/use-window-scroll";
+import { useChatStore } from "@/store/chat";
 
 export interface ChatInputMessage extends PromptInputMessage {
   metadata?: {
@@ -317,8 +318,9 @@ function ChatInputContent() {
           padding: containerPadding,
           flexDirection: containerFlexDirection,
         }}
-        className="!bg-[rgba(247,247,247,0.85)] dark:!bg-[rgba(19,19,19,0.7)] backdrop-blur-lg flex"
+        className="!bg-[rgba(247,247,247,0.85)] dark:!bg-[rgba(19,19,19,0.7)] backdrop-blur-lg flex relative"
       >
+        <AudioPlayer />
         <PromptInput
           onSubmit={handleSubmit}
           globalDrop

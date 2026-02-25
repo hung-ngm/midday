@@ -1,10 +1,5 @@
 "use client";
 
-import { TrackerProjectForm } from "@/components/forms/tracker-project-form";
-import { useLatestProjectId } from "@/hooks/use-latest-project-id";
-import { useTeamQuery } from "@/hooks/use-team";
-import { useTrackerParams } from "@/hooks/use-tracker-params";
-import { useTRPC } from "@/trpc/client";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,15 +20,18 @@ import {
 import { Icons } from "@midday/ui/icons";
 import { ScrollArea } from "@midday/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader } from "@midday/ui/sheet";
-import { useMutation } from "@tanstack/react-query";
-import { useQueryClient } from "@tanstack/react-query";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { TrackerProjectForm } from "@/components/forms/tracker-project-form";
+import { useLatestProjectId } from "@/hooks/use-latest-project-id";
+import { useTeamQuery } from "@/hooks/use-team";
+import { useTrackerParams } from "@/hooks/use-tracker-params";
+import { useTRPC } from "@/trpc/client";
 
 export function TrackerUpdateSheet() {
   const { data: team } = useTeamQuery();
   const defaultCurrency = team?.baseCurrency || "USD";
   const { setParams, update, projectId } = useTrackerParams();
-  const { latestProjectId, setLatestProjectId } = useLatestProjectId();
+  const { latestProjectId, setLatestProjectId } = useLatestProjectId(team?.id);
   const trpc = useTRPC();
   const queryClient = useQueryClient();
 
@@ -44,8 +42,8 @@ export function TrackerUpdateSheet() {
       { id: projectId! },
       {
         enabled: isOpen,
-        staleTime: 0, // Always consider data stale so it always refetches
-        initialData: () => {
+        staleTime: 30 * 1000, // 30 seconds - prevents excessive refetches when reopening
+        placeholderData: () => {
           const pages = queryClient
             .getQueriesData({
               queryKey: trpc.trackerProjects.get.infiniteQueryKey(),

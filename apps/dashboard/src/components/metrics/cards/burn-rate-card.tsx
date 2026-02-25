@@ -1,17 +1,16 @@
 "use client";
 
+import { cn } from "@midday/ui/cn";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { AnimatedNumber } from "@/components/animated-number";
 import { BurnRateChart } from "@/components/charts/burn-rate-chart";
+import { formatChartMonth } from "@/components/charts/chart-utils";
 import { useLongPress } from "@/hooks/use-long-press";
 import { useMetricsCustomize } from "@/hooks/use-metrics-customize";
-import { useOverviewTab } from "@/hooks/use-overview-tab";
 import { useChatStore } from "@/store/chat";
 import { useTRPC } from "@/trpc/client";
 import { generateChartSelectionMessage } from "@/utils/chart-selection-message";
-import { cn } from "@midday/ui/cn";
-import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { useMemo, useState } from "react";
 import { ShareMetricButton } from "../components/share-metric-button";
 
 interface BurnRateCardProps {
@@ -32,7 +31,6 @@ export function BurnRateCard({
   wiggleClass,
 }: BurnRateCardProps) {
   const trpc = useTRPC();
-  const { isMetricsTab } = useOverviewTab();
   const { isCustomizing: metricsIsCustomizing, setIsCustomizing } =
     useMetricsCustomize();
   const setInput = useChatStore((state) => state.setInput);
@@ -44,14 +42,13 @@ export function BurnRateCard({
     disabled: metricsIsCustomizing || isSelecting,
   });
 
-  const { data: burnRateData } = useQuery({
-    ...trpc.reports.burnRate.queryOptions({
+  const { data: burnRateData } = useQuery(
+    trpc.reports.burnRate.queryOptions({
       from,
       to,
       currency: currency,
     }),
-    enabled: isMetricsTab,
-  });
+  );
 
   // Transform burn rate data
   const burnRateChartData = useMemo(() => {
@@ -60,8 +57,10 @@ export function BurnRateCard({
     const values = burnRateData.map((item) => item.value);
     const average = values.reduce((sum, val) => sum + val, 0) / values.length;
 
+    const totalMonths = burnRateData.length;
+
     return burnRateData.map((item) => ({
-      month: format(new Date(item.date), "MMM"),
+      month: formatChartMonth(item.date, totalMonths),
       amount: item.value,
       average,
       currentBurn: item.value,
@@ -69,9 +68,10 @@ export function BurnRateCard({
     }));
   }, [burnRateData]);
 
-  const currentBurnRate = useMemo(() => {
+  const averageBurnRate = useMemo(() => {
     if (!burnRateData || burnRateData.length === 0) return 0;
-    return burnRateData[burnRateData.length - 1]!.value;
+    const values = burnRateData.map((item) => item.value);
+    return values.reduce((sum, val) => sum + val, 0) / values.length;
   }, [burnRateData]);
 
   return (
@@ -85,7 +85,7 @@ export function BurnRateCard({
       <div className="mb-4 min-h-[140px]">
         <div className="flex items-start justify-between h-7">
           <h3 className="text-sm font-normal text-muted-foreground">
-            Monthly Burn Rate
+            Average Monthly Burn Rate
           </h3>
           <div className="opacity-0 group-hover:opacity-100 group-has-[*[data-state=open]]:opacity-100 transition-opacity">
             <ShareMetricButton
@@ -98,7 +98,7 @@ export function BurnRateCard({
         </div>
         <p className="text-3xl font-normal mb-3">
           <AnimatedNumber
-            value={currentBurnRate}
+            value={averageBurnRate}
             currency={currency || "USD"}
             locale={locale}
             maximumFractionDigits={0}
@@ -107,7 +107,7 @@ export function BurnRateCard({
         <div className="flex items-center gap-4 mt-2">
           <div className="flex gap-2 items-center">
             <div className="w-2 h-2 bg-foreground" />
-            <span className="text-xs text-muted-foreground">Current</span>
+            <span className="text-xs text-muted-foreground">Monthly</span>
           </div>
           <div className="flex gap-2 items-center">
             <div

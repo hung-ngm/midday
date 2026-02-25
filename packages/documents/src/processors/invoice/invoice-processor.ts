@@ -7,8 +7,8 @@ import {
   applyInvoiceFixes,
   validateInvoiceConsistency,
 } from "../../utils/cross-field-validation";
-import { detectInvoiceFormat } from "../../utils/format-detection";
 import type { DocumentFormat } from "../../utils/format-detection";
+import { detectInvoiceFormat } from "../../utils/format-detection";
 import {
   calculateExtractionConfidence,
   mergeInvoiceResults,
@@ -135,6 +135,7 @@ export class InvoiceProcessor extends BaseExtractionEngine<
       ...result.data,
       website,
       type: "invoice",
+      document_type: result.data.document_type,
       description: result.data.notes,
       date: result.data.due_date ?? result.data.invoice_date,
       amount: result.data.total_amount,

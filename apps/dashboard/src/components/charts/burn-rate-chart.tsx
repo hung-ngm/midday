@@ -1,6 +1,5 @@
 "use client";
 
-import { formatAmount } from "@/utils/format";
 import {
   Area,
   CartesianGrid,
@@ -11,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatAmount } from "@/utils/format";
 import {
   commonChartConfig,
   createCompactTickFormatter,
@@ -105,7 +105,7 @@ export function BurnRateChart({
     <div className="w-full">
       {/* Chart */}
       <div style={{ height }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" debounce={1}>
           <ComposedChart
             data={data}
             margin={{ top: 6, right: 6, left: -marginLeft, bottom: 6 }}

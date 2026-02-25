@@ -1,4 +1,5 @@
 import { createLoggerWithContext } from "@midday/logger";
+import { parseISO } from "date-fns";
 
 const logger = createLoggerWithContext("matching");
 
@@ -216,7 +217,8 @@ function calculateAmountDifferenceScore(
 
   // Handle invoice (positive) to payment (negative) scenarios
   // This applies to all match types, not just cross-currency
-  const sameSign = (amount1 > 0 && amount2 > 0) || (amount1 < 0 && amount2 < 0);
+  const _sameSign =
+    (amount1 > 0 && amount2 > 0) || (amount1 < 0 && amount2 < 0);
   const oppositeSigns =
     (amount1 > 0 && amount2 < 0) || (amount1 < 0 && amount2 > 0);
 
@@ -319,8 +321,8 @@ export function calculateDateScore(
   transactionDate: string,
   inboxType?: string | null,
 ): number {
-  const inboxDateObj = new Date(inboxDate);
-  const transactionDateObj = new Date(transactionDate);
+  const inboxDateObj = parseISO(inboxDate);
+  const transactionDateObj = parseISO(transactionDate);
 
   const diffDays = Math.abs(
     (inboxDateObj.getTime() - transactionDateObj.getTime()) /

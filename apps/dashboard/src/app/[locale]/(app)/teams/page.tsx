@@ -1,12 +1,12 @@
-import { SelectTeamTable } from "@/components/tables/select-team/table";
-import { TeamInvites } from "@/components/team-invites";
-import { UserMenu } from "@/components/user-menu";
-import { HydrateClient, getQueryClient, prefetch, trpc } from "@/trpc/server";
 import { Button } from "@midday/ui/button";
 import { Icons } from "@midday/ui/icons";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { SelectTeamTable } from "@/components/tables/select-team/table";
+import { TeamInvites } from "@/components/team-invites";
+import { UserMenu } from "@/components/user-menu";
+import { getQueryClient, HydrateClient, trpc } from "@/trpc/server";
 
 export const metadata: Metadata = {
   title: "Teams | Midday",
@@ -21,9 +21,9 @@ export default async function Teams() {
 
   const user = await queryClient.fetchQuery(trpc.user.me.queryOptions());
 
-  // If no teams and no invites, redirect to create team
+  // If no teams and no invites, redirect to onboarding
   if (!teams?.length && !invites?.length) {
-    redirect("/teams/create");
+    redirect("/onboarding");
   }
 
   return (
@@ -44,7 +44,7 @@ export default async function Teams() {
         <div className="relative z-20 m-auto flex w-full max-w-[480px] flex-col">
           <div>
             <div className="text-center">
-              <h1 className="text-lg mb-2 font-serif">
+              <h1 className="text-lg lg:text-xl mb-2 font-serif">
                 Welcome, {user?.fullName?.split(" ").at(0)}
               </h1>
               {invites?.length > 0 ? (
@@ -76,7 +76,7 @@ export default async function Teams() {
             <span className="absolute left-1/2 -translate-x-1/2 text-sm text-[#878787] bg-background -top-3 px-4">
               Or
             </span>
-            <Link href="/teams/create" className="w-full">
+            <Link href="/onboarding" className="w-full">
               <Button className="w-full mt-2" variant="outline">
                 Create team
               </Button>

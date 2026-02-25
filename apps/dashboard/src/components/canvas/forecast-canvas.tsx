@@ -1,5 +1,8 @@
 "use client";
 
+import { useArtifact } from "@ai-sdk-tools/artifacts/client";
+import { forecastArtifact } from "@api/ai/artifacts/forecast";
+import { parseAsInteger, useQueryState } from "nuqs";
 import {
   BaseCanvas,
   CanvasChart,
@@ -15,9 +18,6 @@ import {
   shouldShowSummarySkeleton,
 } from "@/components/canvas/utils";
 import { useUserQuery } from "@/hooks/use-user";
-import { useArtifact } from "@ai-sdk-tools/artifacts/client";
-import { forecastArtifact } from "@api/ai/artifacts/forecast";
-import { parseAsInteger, useQueryState } from "nuqs";
 import { RevenueForecastChart } from "../charts";
 
 export function ForecastCanvas() {
@@ -25,18 +25,24 @@ export function ForecastCanvas() {
   const [artifact] = useArtifact(forecastArtifact, { version });
   const { data, status } = artifact;
   const { data: user } = useUserQuery();
-  const isLoading = status === "loading";
+  const _isLoading = status === "loading";
   const stage = data?.stage;
   const currency = data?.currency || "USD";
   const locale = user?.locale ?? undefined;
 
   // Use artifact data or fallback to empty/default values
+  // Include enhanced forecast fields (optimistic, pessimistic, confidence, breakdown)
+  // to match the dashboard metrics card data structure
   const forecastData =
     data?.chart?.monthlyData?.map((item) => ({
       month: item.month,
       actual: item.actual ?? undefined,
       forecasted: item.forecasted ?? undefined,
       date: item.date,
+      optimistic: item.optimistic ?? undefined,
+      pessimistic: item.pessimistic ?? undefined,
+      confidence: item.confidence ?? undefined,
+      breakdown: item.breakdown ?? undefined,
     })) || [];
 
   const forecastStartIndex = data?.chart?.forecastStartIndex;
@@ -75,6 +81,17 @@ export function ForecastCanvas() {
           value: `${data.metrics.billableHours}h`,
           subtitle: "This month tracked",
         },
+        // Include confidence score when available (matching dashboard metrics card)
+        ...(data.metrics.confidenceScore != null
+          ? [
+              {
+                id: "confidence",
+                title: "Confidence",
+                value: `${data.metrics.confidenceScore}%`,
+                subtitle: "Forecast reliability",
+              },
+            ]
+          : []),
       ]
     : [];
 

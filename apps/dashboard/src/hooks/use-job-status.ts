@@ -1,7 +1,7 @@
 "use client";
 
-import { useTRPC } from "@/trpc/client";
 import { useQuery } from "@tanstack/react-query";
+import { useTRPC } from "@/trpc/client";
 
 type UseJobStatusProps = {
   /** Composite job ID (e.g., "accounting:21") containing queue info */
@@ -10,7 +10,15 @@ type UseJobStatusProps = {
   refetchInterval?:
     | number
     | false
-    | ((query: { state: { data?: { status?: string } } }) => number | false);
+    | ((query: {
+        state: {
+          data?: {
+            status?: string;
+            progress?: number;
+            progressStep?: string;
+          };
+        };
+      }) => number | false);
 };
 
 /**
@@ -28,7 +36,14 @@ export function useJobStatus({
 
   // Default refetch interval: poll every 1 second, stop when completed or failed
   const defaultRefetchInterval = (query: {
-    state: { data?: { status?: string }; status: string };
+    state: {
+      data?: {
+        status?: string;
+        progress?: number;
+        progressStep?: string;
+      };
+      status: string;
+    };
   }) => {
     const status = query.state.data?.status;
     // Stop polling when completed or failed, otherwise poll every second
@@ -62,6 +77,7 @@ export function useJobStatus({
   return {
     status: jobStatus?.status,
     progress: jobStatus?.progress,
+    progressStep: jobStatus?.progressStep,
     result: jobStatus?.result,
     error: jobStatus?.error,
     isLoading,

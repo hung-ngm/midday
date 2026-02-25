@@ -1,6 +1,7 @@
 import {
-  QueryClient,
   defaultShouldDehydrateQuery,
+  isServer,
+  QueryClient,
 } from "@tanstack/react-query";
 import superjson from "superjson";
 
@@ -13,6 +14,7 @@ export function makeQueryClient() {
         staleTime: 2 * 60 * 1000,
         // Keep unused data in cache for 10 minutes before garbage collection
         gcTime: 10 * 60 * 1000,
+        retry: isServer ? 0 : 2,
       },
       dehydrate: {
         serializeData: superjson.serialize,

@@ -1,10 +1,5 @@
 "use client";
 
-import { BaseCanvas, CanvasHeader } from "@/components/canvas/base";
-import { CanvasContent } from "@/components/canvas/base/canvas-content";
-import { Skeleton } from "@/components/canvas/base/skeleton";
-import { useUserQuery } from "@/hooks/use-user";
-import { formatAmount } from "@/utils/format";
 import { useArtifact } from "@ai-sdk-tools/artifacts/client";
 import { balanceSheetArtifact } from "@api/ai/artifacts/balance-sheet";
 import {
@@ -13,8 +8,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@midday/ui/tooltip";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { parseAsInteger, useQueryState } from "nuqs";
+import { BaseCanvas, CanvasHeader } from "@/components/canvas/base";
+import { CanvasContent } from "@/components/canvas/base/canvas-content";
+import { Skeleton } from "@/components/canvas/base/skeleton";
+import { useUserQuery } from "@/hooks/use-user";
+import { formatAmount } from "@/utils/format";
 
 function getBalanceSheetTooltip(item: string): string {
   const tooltips: Record<string, string> = {
@@ -54,13 +54,13 @@ export function BalanceSheetCanvas() {
   const { data, status } = artifact;
   const { data: user } = useUserQuery();
 
-  const isLoading = status === "loading";
+  const _isLoading = status === "loading";
   const stage = data?.stage;
   const balanceSheet = data?.balanceSheet;
   const metrics = data?.metrics;
   const currency = data?.currency || "USD";
   const asOf = data?.asOf
-    ? format(new Date(data.asOf), "MMMM dd, yyyy")
+    ? format(parseISO(data.asOf), "MMMM dd, yyyy")
     : undefined;
 
   // Format financial ratios for display

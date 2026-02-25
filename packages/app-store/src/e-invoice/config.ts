@@ -3,7 +3,7 @@ import { Logo } from "./assets/logo";
 export default {
   name: "E-Invoice",
   id: "e-invoice",
-  category: "Invoicing",
+  category: "payments",
   active: false,
   logo: Logo,
   short_description:
@@ -11,4 +11,3 @@ export default {
   description: null,
   images: [],
 };
-

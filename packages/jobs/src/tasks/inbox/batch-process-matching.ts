@@ -26,7 +26,6 @@ export const batchProcessMatching = schemaTask({
     let noMatchCount = 0;
     let errorCount = 0;
 
-    // Process in smaller batches for better performance and error isolation
     const BATCH_SIZE = 5;
     for (let i = 0; i < inboxIds.length; i += BATCH_SIZE) {
       const batch = inboxIds.slice(i, i + BATCH_SIZE);
@@ -39,7 +38,6 @@ export const batchProcessMatching = schemaTask({
               inboxId,
             });
 
-            // Send notifications based on matching result
             if (hasSuggestion(result)) {
               await triggerMatchingNotification({
                 db,
@@ -52,23 +50,21 @@ export const batchProcessMatching = schemaTask({
             switch (result.action) {
               case "auto_matched":
                 autoMatchCount++;
-                // suggestion is guaranteed to exist when action is "auto_matched"
                 logger.info("Auto-matched inbox item", {
                   teamId,
                   inboxId,
-                  transactionId: result.suggestion!.transactionId,
-                  confidence: result.suggestion!.confidenceScore,
+                  transactionId: result.suggestion?.transactionId,
+                  confidence: result.suggestion?.confidenceScore,
                 });
                 break;
 
               case "suggestion_created":
                 suggestionCount++;
-                // suggestion is guaranteed to exist when action is "suggestion_created"
                 logger.info("Created match suggestion", {
                   teamId,
                   inboxId,
-                  transactionId: result.suggestion!.transactionId,
-                  confidence: result.suggestion!.confidenceScore,
+                  transactionId: result.suggestion?.transactionId,
+                  confidence: result.suggestion?.confidenceScore,
                 });
                 break;
 
@@ -90,7 +86,6 @@ export const batchProcessMatching = schemaTask({
         }),
       );
 
-      // Log batch completion
       const batchErrors = results.filter((r) => r.status === "rejected").length;
       logger.info("Completed batch processing", {
         teamId,

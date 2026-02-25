@@ -1,6 +1,10 @@
+import { createLoggerWithContext } from "@midday/logger";
 import type { QueueOptions, WorkerOptions } from "bullmq";
 import { getRedisConnection } from "../config";
+import { DEFAULT_JOB_OPTIONS } from "../config/job-options";
 import type { QueueConfig } from "../types/queue-config";
+
+const logger = createLoggerWithContext("worker:queue:invoices");
 
 /**
  * Queue options for invoices queue
@@ -8,11 +12,7 @@ import type { QueueConfig } from "../types/queue-config";
 const invoicesQueueOptions: QueueOptions = {
   connection: getRedisConnection(),
   defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: "exponential",
-      delay: 1000,
-    },
+    ...DEFAULT_JOB_OPTIONS,
     removeOnComplete: {
       age: 24 * 3600, // Keep completed jobs for 24 hours
       count: 1000, // Keep max 1000 completed jobs
@@ -36,8 +36,9 @@ const invoicesWorkerOptions: WorkerOptions = {
 
 /**
  * Invoices queue configuration
- * Handles all invoice-related notification jobs
- * Jobs: invoice-notification
+ * Handles invoice generation, scheduling, email sending, and recurring invoices
+ * Jobs: generate-invoice, send-invoice-email, send-invoice-reminder, schedule-invoice,
+ *       invoice-recurring-scheduler, invoice-upcoming-notification
  */
 export const invoicesQueueConfig: QueueConfig = {
   name: "invoices",
@@ -45,10 +46,14 @@ export const invoicesQueueConfig: QueueConfig = {
   workerOptions: invoicesWorkerOptions,
   eventHandlers: {
     onCompleted: (job) => {
-      console.log(`Invoices job completed: ${job.name} (${job.id})`);
+      logger.info("Job completed", { jobName: job.name, jobId: job.id });
     },
     onFailed: (job, err) => {
-      console.error(`Invoices job failed: ${job?.name} (${job?.id})`, err);
+      logger.error("Job failed", {
+        jobName: job?.name,
+        jobId: job?.id,
+        error: err.message,
+      });
     },
   },
 };

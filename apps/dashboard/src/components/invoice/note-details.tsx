@@ -1,8 +1,8 @@
 "use client";
 
-import { Editor } from "@/components/invoice/editor";
-import { useTemplateUpdate } from "@/hooks/use-template-update";
 import { Controller, useFormContext } from "react-hook-form";
+import { InvoiceEditor } from "@/components/invoice/invoice-editor";
+import { useTemplateUpdate } from "@/hooks/use-template-update";
 import { LabelInput } from "./label-input";
 
 export function NoteDetails() {
@@ -26,7 +26,7 @@ export function NoteDetails() {
         name="noteDetails"
         render={({ field }) => {
           return (
-            <Editor
+            <InvoiceEditor
               // NOTE: Key includes both invoice ID and template ID to force remount
               // when either changes, preventing stale content from being saved
               key={`${id}-${templateId}`}
@@ -38,6 +38,7 @@ export function NoteDetails() {
                 });
               }}
               className="min-h-[78px]"
+              placeholder="Type / to insert details"
             />
           );
         }}

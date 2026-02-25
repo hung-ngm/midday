@@ -11,10 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@midday/ui/select";
-import { format, formatISO } from "date-fns";
+import { format, formatISO, parseISO } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import type { DateRange } from "react-day-picker";
-import { type PresetOption, getPresetOptions } from "../utils/date-presets";
+import { useUserQuery } from "@/hooks/use-user";
+import { getPresetOptions } from "../utils/date-presets";
 
 interface MetricsDatePickerProps {
   from: string;
@@ -29,6 +30,7 @@ export function MetricsDatePicker({
   fiscalYearStartMonth,
   onDateRangeChange,
 }: MetricsDatePickerProps) {
+  const { data: user } = useUserQuery();
   const presetOptions = getPresetOptions(fiscalYearStartMonth);
   const [selectedPreset, setSelectedPreset] = useState<string>("");
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
@@ -38,8 +40,8 @@ export function MetricsDatePicker({
     if (!from || !to) return undefined;
     try {
       return {
-        from: new Date(from),
-        to: new Date(to),
+        from: parseISO(from),
+        to: parseISO(to),
       };
     } catch {
       return undefined;
@@ -122,6 +124,7 @@ export function MetricsDatePicker({
             key={selectedPreset}
             className="!p-0"
             mode="range"
+            weekStartsOn={user?.weekStartsOnMonday ? 1 : 0}
             selected={dateRange}
             onSelect={handleDateRangeSelect}
             disabled={(date) => date > new Date()}

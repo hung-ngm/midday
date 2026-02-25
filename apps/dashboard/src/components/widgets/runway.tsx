@@ -1,27 +1,35 @@
-import { useChatInterface } from "@/hooks/use-chat-interface";
-import { useMetricsFilter } from "@/hooks/use-metrics-filter";
-import { useTRPC } from "@/trpc/client";
 import { useChatActions, useChatId } from "@ai-sdk-tools/store";
 import { Icons } from "@midday/ui/icons";
 import { useQuery } from "@tanstack/react-query";
+import { useChatInterface } from "@/hooks/use-chat-interface";
+import { useMetricsFilter } from "@/hooks/use-metrics-filter";
+import { useTRPC } from "@/trpc/client";
 import { BaseWidget } from "./base";
 import { WIDGET_POLLING_CONFIG } from "./widget-config";
+import { WidgetSkeleton } from "./widget-skeleton";
 
 export function RunwayWidget() {
   const trpc = useTRPC();
   const { sendMessage } = useChatActions();
   const chatId = useChatId();
   const { setChatId } = useChatInterface();
-  const { from, to, currency } = useMetricsFilter();
+  const { currency } = useMetricsFilter();
 
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     ...trpc.widgets.getRunway.queryOptions({
-      from,
-      to,
       currency,
     }),
     ...WIDGET_POLLING_CONFIG,
   });
+
+  if (isLoading) {
+    return (
+      <WidgetSkeleton
+        title="Cash Runway"
+        icon={<Icons.Time className="size-4" />}
+      />
+    );
+  }
 
   const handleToolCall = (params: {
     toolName: string;
@@ -48,13 +56,11 @@ export function RunwayWidget() {
     <BaseWidget
       title="Cash Runway"
       icon={<Icons.Time className="size-4" />}
-      description="Your cash runway in months"
+      description="Based on last 6 months"
       onClick={() => {
         handleToolCall({
           toolName: "getRunway",
           toolParams: {
-            from,
-            to,
             currency,
             showCanvas: true,
           },

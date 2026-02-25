@@ -1,17 +1,17 @@
 "use client";
 
+import { cn } from "@midday/ui/cn";
+import { useQuery } from "@tanstack/react-query";
+import { format, parseISO } from "date-fns";
+import { useMemo, useState } from "react";
 import { AnimatedNumber } from "@/components/animated-number";
+import { formatChartMonth } from "@/components/charts/chart-utils";
 import { RevenueForecastChart } from "@/components/charts/revenue-forecast-chart";
 import { useLongPress } from "@/hooks/use-long-press";
 import { useMetricsCustomize } from "@/hooks/use-metrics-customize";
-import { useOverviewTab } from "@/hooks/use-overview-tab";
 import { useChatStore } from "@/store/chat";
 import { useTRPC } from "@/trpc/client";
 import { generateChartSelectionMessage } from "@/utils/chart-selection-message";
-import { cn } from "@midday/ui/cn";
-import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { useMemo, useState } from "react";
 import { ShareMetricButton } from "../components/share-metric-button";
 
 interface RevenueForecastCardProps {
@@ -32,7 +32,6 @@ export function RevenueForecastCard({
   revenueType = "net",
 }: RevenueForecastCardProps) {
   const trpc = useTRPC();
-  const { isMetricsTab } = useOverviewTab();
   const { isCustomizing, setIsCustomizing } = useMetricsCustomize();
   const setInput = useChatStore((state) => state.setInput);
   const [isSelecting, setIsSelecting] = useState(false);
@@ -43,37 +42,46 @@ export function RevenueForecastCard({
     disabled: isCustomizing || isSelecting,
   });
 
-  const { data: revenueForecastData } = useQuery({
-    ...trpc.reports.revenueForecast.queryOptions({
+  const { data: revenueForecastData } = useQuery(
+    trpc.reports.revenueForecast.queryOptions({
       from,
       to,
       forecastMonths: 6,
       currency: currency,
       revenueType,
     }),
-    enabled: isMetricsTab,
-  });
+  );
 
-  // Transform revenue forecast data
+  // Transform revenue forecast data with enhanced fields
   const revenueForecastChartData = useMemo(() => {
     if (!revenueForecastData) return [];
 
     const historical = revenueForecastData.historical || [];
     const forecast = revenueForecastData.forecast || [];
+    const totalMonths = historical.length + forecast.length;
 
     return [
       ...historical.map((item, index) => ({
-        month: format(new Date(item.date), "MMM"),
+        month: formatChartMonth(item.date, totalMonths),
         actual: item.value,
         // Set forecasted value on the last historical point to same as actual to connect the lines
         forecasted: index === historical.length - 1 ? item.value : null,
         date: item.date,
+        // Historical points don't have confidence data
+        optimistic: null,
+        pessimistic: null,
+        confidence: null,
+        breakdown: null,
       })),
       ...forecast.map((item) => ({
-        month: format(new Date(item.date), "MMM"),
+        month: formatChartMonth(item.date, totalMonths),
         actual: null,
         forecasted: item.value,
         date: item.date,
+        optimistic: item.optimistic ?? null,
+        pessimistic: item.pessimistic ?? null,
+        confidence: item.confidence ?? null,
+        breakdown: item.breakdown ?? null,
       })),
     ];
   }, [revenueForecastData]);
@@ -87,10 +95,19 @@ export function RevenueForecastCard({
   const forecastedRevenue =
     revenueForecastData?.summary?.totalProjectedRevenue ?? 0;
 
+  // Get confidence score from new bottom-up forecast meta
+  const confidenceScore = useMemo(() => {
+    const meta = revenueForecastData?.meta;
+    if (meta && "confidenceScore" in meta) {
+      return meta.confidenceScore as number;
+    }
+    return null;
+  }, [revenueForecastData]);
+
   const dateRangeDisplay = useMemo(() => {
     try {
-      const fromDate = new Date(from);
-      const toDate = new Date(to);
+      const fromDate = parseISO(from);
+      const toDate = parseISO(to);
       return `${format(fromDate, "MMM d")} - ${format(toDate, "MMM d, yyyy")}`;
     } catch {
       return "";
@@ -143,6 +160,13 @@ export function RevenueForecastCard({
             />
             <span className="text-xs text-muted-foreground">Forecast</span>
           </div>
+          {confidenceScore !== null && (
+            <div className="flex gap-1 items-center ml-auto">
+              <span className="text-xs text-muted-foreground">
+                {confidenceScore}% confidence
+              </span>
+            </div>
+          )}
         </div>
       </div>
       <div className="h-80">

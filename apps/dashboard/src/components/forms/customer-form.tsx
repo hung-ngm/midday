@@ -1,9 +1,5 @@
 "use client";
 
-import { useCustomerParams } from "@/hooks/use-customer-params";
-import { useInvoiceParams } from "@/hooks/use-invoice-params";
-import { useZodForm } from "@/hooks/use-zod-form";
-import { useTRPC } from "@/trpc/client";
 import type { RouterOutputs } from "@api/trpc/routers/_app";
 import {
   Accordion,
@@ -12,6 +8,7 @@ import {
   AccordionTrigger,
 } from "@midday/ui/accordion";
 import { Button } from "@midday/ui/button";
+import { EmailTagInput } from "@midday/ui/email-tag-input";
 import {
   Form,
   FormControl,
@@ -26,9 +23,14 @@ import { Label } from "@midday/ui/label";
 import { Skeleton } from "@midday/ui/skeleton";
 import { SubmitButton } from "@midday/ui/submit-button";
 import { Textarea } from "@midday/ui/textarea";
+import { isValidEmailList } from "@midday/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { z } from "zod/v3";
+import { useCustomerParams } from "@/hooks/use-customer-params";
+import { useInvoiceParams } from "@/hooks/use-invoice-params";
+import { useZodForm } from "@/hooks/use-zod-form";
+import { useTRPC } from "@/trpc/client";
 import { CountrySelector } from "../country-selector";
 import type { AddressDetails } from "../search-address-input";
 import { SelectTags } from "../select-tags";
@@ -51,13 +53,9 @@ const formSchema = z.object({
   email: z.string().email({
     message: "Email is not valid.",
   }),
-  billingEmail: z
-    .string()
-    .email({
-      message: "Email is not valid.",
-    })
-    .nullable()
-    .optional(),
+  billingEmail: z.string().nullable().optional().refine(isValidEmailList, {
+    message: "All emails must be valid and unique.",
+  }),
   phone: z.string().optional(),
   website: z
     .string()
@@ -192,6 +190,15 @@ export function CustomerForm({ data }: Props) {
   };
 
   const handleSubmit = (data: z.infer<typeof formSchema>) => {
+    // Extract domain from email if website is not set (handles Enter key submission)
+    let website = data.website || null;
+    if (!website && data.email) {
+      const domain = data.email.split("@").at(1);
+      if (domain && !excludedDomains.includes(domain)) {
+        website = domain;
+      }
+    }
+
     const formattedData = {
       ...data,
       id: data.id || undefined,
@@ -203,7 +210,7 @@ export function CustomerForm({ data }: Props) {
       country: data.country || null,
       contact: data.contact || null,
       note: data.note || null,
-      website: data.website || null,
+      website,
       phone: data.phone || null,
       zip: data.zip || null,
       vatNumber: data.vatNumber || null,
@@ -287,24 +294,15 @@ export function CustomerForm({ data }: Props) {
                             Billing Email
                           </FormLabel>
                           <FormControl>
-                            <Input
-                              {...field}
-                              value={field.value ?? ""}
-                              onChange={(e) => {
-                                field.onChange(
-                                  e.target.value.trim().length > 0
-                                    ? e.target.value.trim()
-                                    : null,
-                                );
-                              }}
-                              placeholder="finance@example.com"
-                              type="email"
-                              autoComplete="off"
+                            <EmailTagInput
+                              value={field.value}
+                              onChange={field.onChange}
+                              placeholder="finance@example.com, accounting@example.com"
                             />
                           </FormControl>
                           <FormDescription>
-                            This is an additional email that will be used to
-                            send invoices to.
+                            Additional emails to BCC when sending invoices.
+                            Press Enter or comma to add.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

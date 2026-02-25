@@ -1,11 +1,11 @@
 "use client";
 
-import { useChatInterface } from "@/hooks/use-chat-interface";
 import { cn } from "@midday/ui/cn";
 import { Icons } from "@midday/ui/icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useChatInterface } from "@/hooks/use-chat-interface";
 
 const icons = {
   "/": () => <Icons.Overview size={20} />,
@@ -92,18 +92,6 @@ const items = [
   },
 ];
 
-// Known menu base paths that should not be treated as chat IDs
-const KNOWN_MENU_PATHS = [
-  "/transactions",
-  "/inbox",
-  "/invoices",
-  "/tracker",
-  "/customers",
-  "/vault",
-  "/apps",
-  "/settings",
-];
-
 interface ItemProps {
   item: {
     path: string;
@@ -136,8 +124,8 @@ const ChildItem = ({
 
   return (
     <Link
-      prefetch
       href={child.path}
+      prefetch
       onClick={() => onSelect?.()}
       className="block group/child"
     >
@@ -198,8 +186,8 @@ const Item = ({
   return (
     <div className="group">
       <Link
-        prefetch
         href={item.path}
+        prefetch
         onClick={() => onSelect?.()}
         className="group"
       >
@@ -291,15 +279,6 @@ export function MainMenu({ onSelect, isExpanded = false }: Props) {
   const part = pathname?.split("/")[1];
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
-  // Check if current pathname is a known menu path (including sub-paths)
-  const pathnameWithoutQuery = pathname?.split("?")[0] || "";
-  const isKnownMenuPath = KNOWN_MENU_PATHS.some((knownPath) =>
-    pathnameWithoutQuery.startsWith(knownPath),
-  );
-
-  // Only treat as chat page if isChatPage is true AND it's not a known menu path
-  const isValidChatPage = isChatPage && !isKnownMenuPath;
-
   // Reset expanded item when sidebar expands/collapses
   useEffect(() => {
     setExpandedItem(null);
@@ -311,10 +290,13 @@ export function MainMenu({ onSelect, isExpanded = false }: Props) {
         <div className="flex flex-col gap-2">
           {items.map((item) => {
             // Check if current path matches item path or is a child of it
+            // Chat pages (/chat/*) should highlight Overview
             const isActive =
               (pathname === "/" && item.path === "/") ||
-              (item.path === "/" && isValidChatPage) ||
-              (pathname !== "/" && item.path.startsWith(`/${part}`));
+              (item.path === "/" && isChatPage) ||
+              (pathname !== "/" &&
+                !isChatPage &&
+                item.path.startsWith(`/${part}`));
 
             return (
               <Item

@@ -2,7 +2,11 @@
 
 import { fromStripeAmount } from "@midday/invoice/currency";
 import { Button } from "@midday/ui/button";
-import { Dialog, DialogContent } from "@midday/ui/dialog";
+import { cn } from "@midday/ui/cn";
+import { Drawer, DrawerContent } from "@midday/ui/drawer";
+import { useMediaQuery } from "@midday/ui/hooks";
+import { Icons } from "@midday/ui/icons";
+import { Skeleton } from "@midday/ui/skeleton";
 import { Spinner } from "@midday/ui/spinner";
 import { SubmitButton } from "@midday/ui/submit-button";
 import {
@@ -13,8 +17,12 @@ import {
 } from "@stripe/react-stripe-js";
 import type { Appearance } from "@stripe/stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
+import { motion } from "framer-motion";
 import { useTheme } from "next-themes";
-import { useEffect, useMemo, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { useOnClickOutside } from "usehooks-ts";
+import { useSuccessSound } from "@/hooks/use-success-sound";
+import { downloadFile } from "@/lib/download";
 
 function StripeLogo({ className }: { className?: string }) {
   return (
@@ -42,10 +50,12 @@ interface PaymentModalProps {
   currency: string;
   invoiceNumber: string;
   onSuccess?: () => void;
+  prefetch?: boolean;
+  useOverlay?: boolean;
 }
 
 interface PaymentFormProps {
-  onSuccess?: () => void;
+  onSuccess?: (paymentIntentId: string) => void;
   onCancel: () => void;
   amount: number;
   currency: string;
@@ -72,7 +82,7 @@ function PaymentForm({
     setIsProcessing(true);
     setError(null);
 
-    const { error: submitError } = await stripe.confirmPayment({
+    const { error: submitError, paymentIntent } = await stripe.confirmPayment({
       elements,
       confirmParams: {
         return_url: window.location.href,
@@ -83,9 +93,9 @@ function PaymentForm({
     if (submitError) {
       setError(submitError.message || "Payment failed");
       setIsProcessing(false);
-    } else {
+    } else if (paymentIntent?.id) {
       // Payment succeeded
-      onSuccess?.();
+      onSuccess?.(paymentIntent.id);
     }
   };
 
@@ -96,31 +106,72 @@ function PaymentForm({
     }).format(fromStripeAmount(stripeAmount, curr));
   };
 
+  const [isReady, setIsReady] = useState(false);
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="bg-muted/50 rounded-lg p-4 text-center">
-        <p className="text-sm text-muted-foreground mb-1">Amount due</p>
-        <p className="text-2xl font-semibold">
-          {formatAmount(amount, currency)}
-        </p>
+    <form onSubmit={handleSubmit} className="flex flex-col h-full min-h-0">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-6 min-h-0">
+        {/* Amount - animates in first */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0 }}
+          className="bg-muted/50 rounded-lg p-4 text-center"
+        >
+          <p className="text-sm text-muted-foreground mb-1">Amount due</p>
+          <p className="text-2xl">{formatAmount(amount, currency)}</p>
+        </motion.div>
+
+        {/* Payment form skeleton - shows while loading */}
+        {!isReady && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.2, delay: 0.1 }}
+            className="space-y-4"
+          >
+            {/* Payment method tabs skeleton */}
+            <div className="flex gap-2">
+              <Skeleton className="h-10 flex-1" />
+              <Skeleton className="h-10 flex-1" />
+            </div>
+            {/* Card number field skeleton */}
+            <Skeleton className="h-12 w-full" />
+            {/* Expiry and CVC row skeleton */}
+            <div className="flex gap-4">
+              <Skeleton className="h-12 flex-1" />
+              <Skeleton className="h-12 flex-1" />
+            </div>
+          </motion.div>
+        )}
+
+        {/* Payment form - animates in when ready */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: isReady ? 1 : 0 }}
+          transition={{ duration: 0.3 }}
+          className={isReady ? "" : "absolute opacity-0 pointer-events-none"}
+        >
+          <PaymentElement
+            options={{
+              layout: "tabs",
+            }}
+            onReady={() => setIsReady(true)}
+          />
+        </motion.div>
+
+        {error && (
+          <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md">
+            {error}
+          </div>
+        )}
       </div>
 
-      <PaymentElement
-        options={{
-          layout: "tabs",
-        }}
-      />
-
-      {error && (
-        <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md">
-          {error}
-        </div>
-      )}
-
-      <div className="flex flex-col gap-3">
+      {/* Buttons - fixed at bottom */}
+      <div className="flex flex-col gap-3 pt-6 mt-6 border-t border-border pb-2">
         <SubmitButton
           isSubmitting={isProcessing}
-          disabled={!stripe || !elements || isProcessing}
+          disabled={!stripe || !elements || isProcessing || !isReady}
           className="w-full"
         >
           {isProcessing ? "Processing..." : "Pay now"}
@@ -141,12 +192,13 @@ export function PaymentModal({
   open,
   onOpenChange,
   invoiceToken,
-  amount,
-  currency,
   invoiceNumber,
   onSuccess,
+  prefetch,
+  useOverlay = false,
 }: PaymentModalProps) {
   const { resolvedTheme } = useTheme();
+  const { play: playSuccessSound } = useSuccessSound();
   const [mounted, setMounted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,16 +208,17 @@ export function PaymentModal({
     amount: number;
     currency: string;
   } | null>(null);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
 
   // Need to wait for mount to access theme
   useEffect(() => setMounted(true), []);
 
-  // Auto-initialize payment when modal opens
+  // Auto-initialize payment when modal opens or prefetch is triggered
   useEffect(() => {
-    if (open && !paymentData && !isLoading && !error) {
+    if ((open || prefetch) && !paymentData && !isLoading && !error) {
       initializePayment();
     }
-  }, [open]);
+  }, [open, prefetch]);
 
   // Stripe Elements appearance based on theme
   const getAppearance = (): Appearance => {
@@ -176,7 +229,8 @@ export function PaymentModal({
       variables: {
         borderRadius: "0px",
         colorPrimary: isDark ? "#FFFFFF" : "#121212",
-        colorBackground: isDark ? "#1A1A1A" : "#FFFFFF",
+        // Sheet background: dark=#0C0C0C, light=#FAFAF9
+        colorBackground: isDark ? "#0C0C0C" : "#FAFAF9",
         colorText: isDark ? "#F5F5F3" : "#121212",
         colorTextSecondary: isDark ? "#A1A1A1" : "#666666",
         colorDanger: "#EF4444",
@@ -187,7 +241,7 @@ export function PaymentModal({
       },
       rules: {
         ".Input": {
-          backgroundColor: isDark ? "#121212" : "#FFFFFF",
+          backgroundColor: isDark ? "#0C0C0C" : "#F0F0EE",
           border: isDark ? "1px solid #2E2E2E" : "1px solid #E5E5E5",
           boxShadow: "none",
           padding: "12px",
@@ -196,24 +250,44 @@ export function PaymentModal({
           border: isDark ? "1px solid #404040" : "1px solid #121212",
           boxShadow: "none",
         },
+        ".TabList": {
+          border: "none",
+          boxShadow: "none",
+        },
         ".Tab": {
-          backgroundColor: isDark ? "#121212" : "#FFFFFF",
+          backgroundColor: "transparent",
           border: isDark ? "1px solid #2E2E2E" : "1px solid #E5E5E5",
+          boxShadow: "none",
+          outline: "none",
           color: isDark ? "#A1A1A1" : "#666666",
           padding: "10px 12px",
         },
         ".Tab:hover": {
-          backgroundColor: isDark ? "#1A1A1A" : "#F6F6F3",
+          backgroundColor: "transparent",
+          border: isDark ? "1px solid #404040" : "1px solid #CCCCCC",
+          boxShadow: "none",
           color: isDark ? "#FFFFFF" : "#121212",
         },
+        ".Tab:focus": {
+          boxShadow: "none",
+          outline: "none",
+        },
         ".Tab--selected": {
-          backgroundColor: isDark ? "#1A1A1A" : "#F6F6F3",
-          border: isDark ? "1px solid #404040" : "1px solid #121212",
+          backgroundColor: "transparent",
+          border: isDark ? "1px solid #FFFFFF" : "1px solid #121212",
+          boxShadow: "none",
+          outline: "none",
           color: isDark ? "#FFFFFF" : "#121212",
         },
         ".Tab--selected:hover": {
-          backgroundColor: isDark ? "#1A1A1A" : "#F6F6F3",
+          backgroundColor: "transparent",
+          border: isDark ? "1px solid #FFFFFF" : "1px solid #121212",
+          boxShadow: "none",
           color: isDark ? "#FFFFFF" : "#121212",
+        },
+        ".Tab--selected:focus": {
+          boxShadow: "none",
+          outline: "none",
         },
         ".Tab--selected .TabIcon": {
           fill: isDark ? "#FFFFFF" : "#121212",
@@ -237,7 +311,7 @@ export function PaymentModal({
           padding: "0",
         },
         ".CheckboxInput": {
-          backgroundColor: isDark ? "#121212" : "#FFFFFF",
+          backgroundColor: isDark ? "#0C0C0C" : "#F0F0EE",
           border: isDark ? "1px solid #2E2E2E" : "1px solid #E5E5E5",
         },
         ".CheckboxInput--checked": {
@@ -301,12 +375,14 @@ export function PaymentModal({
     if (!newOpen) {
       setPaymentData(null);
       setError(null);
+      setPaymentSuccess(false);
     }
     onOpenChange(newOpen);
   };
 
-  const handleSuccess = () => {
-    onOpenChange(false);
+  const handleSuccess = (_paymentIntentId: string) => {
+    playSuccessSound();
+    setPaymentSuccess(true);
     onSuccess?.();
   };
 
@@ -322,34 +398,123 @@ export function PaymentModal({
     });
   }, [paymentData?.stripeAccountId]);
 
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[470px] px-8">
-        <div className="p-6">
-          {isLoading && (
-            <div className="flex items-center justify-center py-12">
-              <Spinner size={24} />
+  const hasPaymentData = paymentData && stripePromise && !isLoading && !error;
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Handle click outside to close (desktop only, push mode only)
+  // In overlay mode, the backdrop handles closing
+  useOnClickOutside(panelRef as RefObject<HTMLElement>, (event) => {
+    if (isDesktop && open && !useOverlay) {
+      const target = event.target as Element;
+      // Don't close if clicking inside the invoice toolbar
+      const toolbar = document.querySelector("[data-invoice-toolbar]");
+      if (toolbar?.contains(target)) {
+        return;
+      }
+      onOpenChange(false);
+    }
+  });
+
+  // Success screen component
+  const SuccessScreen = ({ isMobile = false }: { isMobile?: boolean }) => {
+    const [isDownloading, setIsDownloading] = useState(false);
+
+    const formatAmount = (stripeAmount: number, curr: string) => {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: curr.toUpperCase(),
+      }).format(fromStripeAmount(stripeAmount, curr));
+    };
+
+    const handleDownloadReceipt = async () => {
+      setIsDownloading(true);
+      try {
+        await downloadFile(
+          `${process.env.NEXT_PUBLIC_API_URL}/files/download/invoice?token=${invoiceToken}&type=receipt`,
+          `receipt-${invoiceNumber}.pdf`,
+        );
+        // Add minimum delay to show spinner
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      } finally {
+        setIsDownloading(false);
+      }
+    };
+
+    return (
+      <div
+        className={cn(
+          "flex flex-col items-center justify-center text-center",
+          isMobile ? "h-full py-8 px-4" : "flex-1 min-h-0 py-8",
+        )}
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <h2 className="text-2xl font-serif mb-2">Payment successful</h2>
+          <p className="text-muted-foreground mb-6">
+            Your payment has been processed successfully.
+          </p>
+
+          {paymentData && (
+            <div className="bg-muted/50 rounded-lg p-4 mb-6 text-center">
+              <p className="text-sm text-muted-foreground mb-1">Amount paid</p>
+              <p className="text-xl">
+                {formatAmount(paymentData.amount, paymentData.currency)}
+              </p>
             </div>
           )}
 
-          {error && !isLoading && (
-            <div className="text-center py-8">
-              <div className="bg-destructive/10 text-destructive text-sm p-4 rounded-md mb-4">
-                {error}
+          <Button
+            variant="outline"
+            onClick={handleDownloadReceipt}
+            disabled={isDownloading}
+          >
+            {isDownloading ? (
+              <>
+                <Spinner className="size-4 mr-2" />
+                Downloading...
+              </>
+            ) : (
+              <>
+                <Icons.ArrowCoolDown className="size-4 mr-2" />
+                Download receipt
+              </>
+            )}
+          </Button>
+        </motion.div>
+      </div>
+    );
+  };
+
+  // Shared content component
+  const PaymentContent = ({ isMobile = false }: { isMobile?: boolean }) => (
+    <div
+      className={cn("flex flex-col", isMobile ? "h-full" : "flex-1 min-h-0")}
+    >
+      {/* Success screen */}
+      {paymentSuccess ? (
+        <SuccessScreen isMobile={isMobile} />
+      ) : (
+        <>
+          {/* Error state */}
+          {error && !hasPaymentData && (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <div className="bg-destructive/10 text-destructive text-sm p-4 rounded-md mb-4">
+                  {error}
+                </div>
+                <Button variant="outline" onClick={initializePayment}>
+                  Try again
+                </Button>
               </div>
-              <Button variant="outline" onClick={initializePayment}>
-                Try again
-              </Button>
             </div>
           )}
 
-          {!isLoading && !error && !paymentData && (
-            <div className="flex items-center justify-center py-12">
-              <Spinner size={24} />
-            </div>
-          )}
-
-          {paymentData && stripePromise && !isLoading && !error && (
+          {/* Payment form */}
+          {hasPaymentData && (
             <Elements
               stripe={stripePromise}
               options={{
@@ -366,14 +531,85 @@ export function PaymentModal({
             </Elements>
           )}
 
-          <div className="flex items-center justify-center gap-2 mt-6 pt-4 border-t border-border">
+          {/* Stripe footer - always at bottom */}
+          <div className="flex items-center justify-center gap-2 py-2 border-t border-border mt-auto">
             <span className="text-xs text-muted-foreground">
               Secure payment handled by
             </span>
             <StripeLogo className="text-muted-foreground" />
           </div>
+        </>
+      )}
+    </div>
+  );
+
+  // Mobile: Use Drawer
+  if (!isDesktop) {
+    return (
+      <Drawer open={open} onOpenChange={handleOpenChange}>
+        <DrawerContent className="flex flex-col max-h-[90vh]">
+          <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
+            <PaymentContent isMobile />
+          </div>
+        </DrawerContent>
+      </Drawer>
+    );
+  }
+
+  // Desktop: Fixed side panel (like BaseCanvas) or overlay
+  if (useOverlay) {
+    // Overlay mode: show as a centered modal-like panel with backdrop
+    return (
+      <>
+        {open && (
+          <div
+            className="fixed inset-0 bg-black/50 z-30 transition-opacity duration-300"
+            onClick={() => onOpenChange(false)}
+          />
+        )}
+        <div
+          ref={panelRef}
+          data-payment-panel
+          className={cn(
+            "fixed z-40 scrollbar-hide overflow-y-auto",
+            "bg-white dark:bg-[#0C0C0C] border border-[#e6e6e6] dark:border-[#1d1d1d]",
+            "overflow-x-hidden transition-all duration-300 ease-in-out",
+            "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] max-w-[90vw]",
+            "max-h-[90vh] shadow-lg",
+            open
+              ? "opacity-100 scale-100"
+              : "opacity-0 scale-95 pointer-events-none",
+            // Hide on mobile (Drawer handles it)
+            !isDesktop && "hidden",
+          )}
+        >
+          <div className="h-full flex flex-col relative p-6">
+            <PaymentContent />
+          </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </>
+    );
+  }
+
+  // Push mode: side panel that pushes content
+  return (
+    <div
+      ref={panelRef}
+      data-payment-panel
+      className={cn(
+        "fixed z-30 scrollbar-hide overflow-y-auto",
+        "bg-white dark:bg-[#0C0C0C] border border-[#e6e6e6] dark:border-[#1d1d1d]",
+        "overflow-x-hidden transition-transform duration-300 ease-in-out",
+        "top-0 bottom-0 right-0 w-[520px]",
+        open ? "translate-x-0" : "translate-x-full",
+        // Hide on mobile (Drawer handles it)
+        !isDesktop && "hidden",
+      )}
+      style={{ height: "100vh" }}
+    >
+      <div className="h-full flex flex-col relative p-6">
+        <PaymentContent />
+      </div>
+    </div>
   );
 }

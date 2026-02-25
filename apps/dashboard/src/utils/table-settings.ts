@@ -1,4 +1,5 @@
 import type {
+  ColumnDef,
   ColumnOrderState,
   ColumnSizingState,
   VisibilityState,
@@ -34,8 +35,16 @@ export const TABLE_SETTINGS_COOKIE = "table-settings";
  * Default hidden columns for each table
  */
 export const defaultHiddenColumns: Record<TableId, string[]> = {
-  transactions: ["assigned", "tags", "method", "counterparty", "taxAmount"],
-  customers: ["tags"],
+  transactions: [
+    "assigned",
+    "tags",
+    "method",
+    "counterparty",
+    "taxAmount",
+    "baseAmount",
+    "baseTaxAmount",
+  ],
+  customers: ["tags", "website", "financeEmail", "language"],
   invoices: [
     "sentAt",
     "exclVat",
@@ -87,4 +96,50 @@ export function mergeWithDefaults(
     sizing: saved?.sizing ?? defaults.sizing,
     order: saved?.order ?? defaults.order,
   };
+}
+
+/**
+ * Extract column IDs from column definitions in definition order.
+ */
+export function getColumnIds<TData>(columns: ColumnDef<TData>[]): string[] {
+  return columns
+    .map(
+      (col) =>
+        col.id ??
+        (col as ColumnDef<TData> & { accessorKey?: string }).accessorKey ??
+        "",
+    )
+    .filter(Boolean);
+}
+
+/**
+ * Normalize a saved column order against the current column definitions.
+ * - Removes columns that no longer exist in definitions
+ * - Inserts new columns (not in saved order) before "actions"
+ * - Ensures "actions" is always the last column
+ */
+export function normalizeColumnOrder(
+  savedOrder: ColumnOrderState,
+  allColumnIds: string[],
+): ColumnOrderState {
+  if (savedOrder.length === 0) return savedOrder;
+
+  const definedIds = new Set(allColumnIds);
+  const savedIds = new Set(savedOrder);
+
+  const orderWithoutActions = savedOrder.filter(
+    (id) => id !== "actions" && definedIds.has(id),
+  );
+
+  const newColumns = allColumnIds.filter(
+    (id) => id !== "actions" && !savedIds.has(id),
+  );
+
+  const result = [...orderWithoutActions, ...newColumns];
+
+  if (definedIds.has("actions")) {
+    result.push("actions");
+  }
+
+  return result;
 }

@@ -1,6 +1,3 @@
-import { useAppOAuth } from "@/hooks/use-app-oauth";
-import { useTRPC } from "@/trpc/client";
-import { getScopeDescription } from "@/utils/scopes";
 import type { UnifiedApp } from "@midday/app-store/types";
 import { openUrl } from "@midday/desktop-client/core";
 import { isDesktopApp } from "@midday/desktop-client/platform";
@@ -23,10 +20,14 @@ import {
 import { ScrollArea } from "@midday/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader } from "@midday/ui/sheet";
 import { SubmitButton } from "@midday/ui/submit-button";
+import { useToast } from "@midday/ui/use-toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import { parseAsBoolean, parseAsString, useQueryStates } from "nuqs";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useAppOAuth } from "@/hooks/use-app-oauth";
+import { useTRPC } from "@/trpc/client";
+import { getScopeDescription } from "@/utils/scopes";
 import { AppSettings } from "./app-settings";
 import { MemoizedReactMarkdown } from "./markdown";
 
@@ -55,7 +56,10 @@ interface UnifiedAppProps {
 function CarouselWithDots({
   images,
   appName,
-}: { images: string[]; appName: string }) {
+}: {
+  images: string[];
+  appName: string;
+}) {
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
 
@@ -112,6 +116,7 @@ function CarouselWithDots({
 export function UnifiedAppComponent({ app }: UnifiedAppProps) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [isLoading, setLoading] = useState(false);
   const [params, setParams] = useQueryStates({
     app: parseAsString,
@@ -141,6 +146,12 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
       setLoading(false);
     },
     onError: () => {
+      // Show toast notification - error details are also visible in the popup window
+      toast({
+        title: "Connection failed",
+        description: `Failed to connect ${app.name}. Please try again.`,
+        variant: "error",
+      });
       setLoading(false);
     },
   });
@@ -264,7 +275,7 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
           },
         });
       }
-    } catch (error) {
+    } catch (_error) {
       setLoading(false);
     }
   };
@@ -312,6 +323,15 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
         </CardContent>
 
         <div className="px-6 pb-6 flex gap-2 mt-auto">
+          <Button
+            variant="outline"
+            className="w-full"
+            disabled={!app.active}
+            onClick={() => setParams({ app: app.id })}
+          >
+            Details
+          </Button>
+
           {app.installUrl ? (
             <Button
               variant="outline"
@@ -319,40 +339,27 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
               onClick={handleOnInitialize}
               disabled={!app.active}
             >
-              Download
+              {app.id === "midday-desktop" ? "Download" : "Install"}
             </Button>
+          ) : app.installed ? (
+            <SubmitButton
+              variant="outline"
+              className="w-full"
+              onClick={handleDisconnect}
+              isSubmitting={isDisconnecting}
+            >
+              Disconnect
+            </SubmitButton>
           ) : (
-            <>
-              <Button
-                variant="outline"
-                className="w-full"
-                disabled={!app.active}
-                onClick={() => setParams({ app: app.id })}
-              >
-                Details
-              </Button>
-
-              {app.installed ? (
-                <SubmitButton
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleDisconnect}
-                  isSubmitting={isDisconnecting}
-                >
-                  Disconnect
-                </SubmitButton>
-              ) : (
-                <SubmitButton
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleOnInitialize}
-                  disabled={!app.active}
-                  isSubmitting={isInstalling}
-                >
-                  Install
-                </SubmitButton>
-              )}
-            </>
+            <SubmitButton
+              variant="outline"
+              className="w-full"
+              onClick={handleOnInitialize}
+              disabled={!app.active}
+              isSubmitting={isInstalling}
+            >
+              Install
+            </SubmitButton>
           )}
         </div>
 
@@ -422,7 +429,7 @@ export function UnifiedAppComponent({ app }: UnifiedAppProps) {
                     disabled={!app.active}
                     isSubmitting={isInstalling}
                   >
-                    {app.installUrl ? "Download" : "Install"}
+                    {app.id === "midday-desktop" ? "Download" : "Install"}
                   </SubmitButton>
                 )}
               </div>

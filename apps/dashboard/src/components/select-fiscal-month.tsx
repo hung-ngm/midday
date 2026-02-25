@@ -1,11 +1,15 @@
 import { ComboboxDropdown } from "@midday/ui/combobox-dropdown";
+import type { PopoverContent } from "@midday/ui/popover";
 import { getFiscalYearLabel } from "@midday/utils";
 
 type Props = {
   value?: number | null;
   onChange: (value: number | null) => void;
   className?: string;
+  triggerClassName?: string;
   headless?: boolean;
+  popoverProps?: React.ComponentProps<typeof PopoverContent>;
+  listClassName?: string;
 };
 
 const fiscalMonthOptions = [
@@ -28,7 +32,10 @@ export function SelectFiscalMonth({
   value,
   onChange,
   className,
+  triggerClassName,
   headless,
+  popoverProps,
+  listClassName,
 }: Props) {
   const selectedItem = fiscalMonthOptions.find(
     (item) => item.value === value || (item.value === null && value === null),
@@ -42,6 +49,9 @@ export function SelectFiscalMonth({
       searchPlaceholder="Search months"
       items={fiscalMonthOptions}
       className={className}
+      triggerClassName={triggerClassName}
+      popoverProps={popoverProps}
+      listClassName={listClassName}
       onSelect={(item) => {
         onChange(item.value);
       }}

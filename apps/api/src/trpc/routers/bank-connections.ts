@@ -1,13 +1,18 @@
 import {
+  addProviderAccountsSchema,
   createBankConnectionSchema,
   deleteBankConnectionSchema,
   getBankConnectionsSchema,
+  reconnectBankConnectionSchema,
 } from "@api/schemas/bank-connections";
 import { createTRPCRouter, protectedProcedure } from "@api/trpc/init";
+import { chatCache } from "@midday/cache/chat-cache";
 import {
+  addProviderAccounts,
   createBankConnection,
   deleteBankConnection,
   getBankConnections,
+  reconnectBankConnection,
 } from "@midday/db/queries";
 import type {
   DeleteConnectionPayload,
@@ -42,6 +47,12 @@ export const bankConnectionsRouter = createTRPCRouter({
         });
       }
 
+      try {
+        await chatCache.invalidateTeamContext(teamId!);
+      } catch {
+        // Non-fatal — cache will expire naturally
+      }
+
       const event = await tasks.trigger("initial-bank-setup", {
         connectionId: data.id,
         teamId: teamId!,
@@ -69,5 +80,44 @@ export const bankConnectionsRouter = createTRPCRouter({
       } satisfies DeleteConnectionPayload);
 
       return data;
+    }),
+
+  addAccounts: protectedProcedure
+    .input(addProviderAccountsSchema)
+    .mutation(async ({ input, ctx: { db, teamId, session } }) => {
+      const result = await addProviderAccounts(db, {
+        connectionId: input.connectionId,
+        teamId: teamId!,
+        userId: session.user.id,
+        accounts: input.accounts,
+      });
+
+      try {
+        await chatCache.invalidateTeamContext(teamId!);
+      } catch {
+        // Non-fatal
+      }
+
+      return result;
+    }),
+
+  reconnect: protectedProcedure
+    .input(reconnectBankConnectionSchema)
+    .mutation(async ({ input, ctx: { db, teamId } }) => {
+      const result = await reconnectBankConnection(db, {
+        referenceId: input.referenceId,
+        newReferenceId: input.newReferenceId,
+        expiresAt: input.expiresAt,
+        teamId: teamId!,
+      });
+
+      if (!result) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Bank connection not found",
+        });
+      }
+
+      return result;
     }),
 });

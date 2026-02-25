@@ -1,40 +1,40 @@
-import { getWriter } from "@ai-sdk-tools/artifacts";
 import { openai } from "@ai-sdk/openai";
+import { getWriter } from "@ai-sdk-tools/artifacts";
 import type { AppContext } from "@api/ai/agents/config/shared";
 import { burnRateArtifact } from "@api/ai/artifacts/burn-rate";
 import { generateArtifactDescription } from "@api/ai/utils/artifact-title";
-import { getToolDateDefaults } from "@api/ai/utils/tool-date-defaults";
+import { resolveToolParams } from "@api/ai/utils/period-dates";
 import { checkBankAccountsRequired } from "@api/ai/utils/tool-helpers";
 import { db } from "@midday/db/client";
 import { getBurnRate, getRunway, getSpending } from "@midday/db/queries";
 import { formatAmount } from "@midday/utils/format";
-import { generateText } from "ai";
-import { tool } from "ai";
+import { generateText, tool } from "ai";
 import {
   eachMonthOfInterval,
   endOfMonth,
   format,
+  parseISO,
   startOfMonth,
 } from "date-fns";
 import { z } from "zod";
 
 const getBurnRateSchema = z.object({
-  from: z.string().optional().describe("Start date (ISO 8601)"),
-  to: z.string().optional().describe("End date (ISO 8601)"),
-  currency: z
-    .string()
-    .describe("Currency code (ISO 4217, e.g. 'USD')")
-    .nullable()
-    .optional(),
-  showCanvas: z.boolean().default(false).describe("Show visual analytics"),
+  period: z
+    .enum(["3-months", "6-months", "this-year", "1-year", "2-years", "5-years"])
+    .optional()
+    .describe("Historical period"),
+  from: z.string().optional().describe("Start date (yyyy-MM-dd)"),
+  to: z.string().optional().describe("End date (yyyy-MM-dd)"),
+  currency: z.string().nullable().optional().describe("Currency code"),
+  showCanvas: z.boolean().default(false).describe("Show visual canvas"),
 });
 
 export const getBurnRateTool = tool({
   description:
-    "Calculate monthly cash burn rate - shows how much money the business spends per month with trends, average monthly burn, and changes over time. DO NOT use this tool if the user requests a 'breakdown' - use getMetricsBreakdown instead.",
+    "Calculate monthly cash burn rate - spending per month with trends.",
   inputSchema: getBurnRateSchema,
   execute: async function* (
-    { from, to, currency, showCanvas },
+    { period, from, to, currency, showCanvas },
     executionOptions,
   ) {
     const appContext = executionOptions.experimental_context as AppContext;
@@ -58,10 +58,20 @@ export const getBurnRateTool = tool({
     }
 
     try {
-      // Use fiscal year-aware defaults if dates not provided
-      const defaultDates = getToolDateDefaults(appContext.fiscalYearStartMonth);
-      const finalFrom = from ?? defaultDates.from;
-      const finalTo = to ?? defaultDates.to;
+      // Resolve parameters with proper priority:
+      // 1. Forced params from widget click (if this tool was triggered by widget)
+      // 2. Explicit AI params (user override)
+      // 3. Dashboard metricsFilter (source of truth)
+      // 4. Hardcoded defaults
+      const resolved = resolveToolParams({
+        toolName: "getBurnRate",
+        appContext,
+        aiParams: { period, from, to, currency },
+      });
+
+      const finalFrom = resolved.from;
+      const finalTo = resolved.to;
+      const finalCurrency = resolved.currency;
 
       // Generate description based on date range
       const description = generateArtifactDescription(finalFrom, finalTo);
@@ -73,7 +83,7 @@ export const getBurnRateTool = tool({
         analysis = burnRateArtifact.stream(
           {
             stage: "loading",
-            currency: currency || appContext.baseCurrency || "USD",
+            currency: finalCurrency || "USD",
             from: finalFrom,
             to: finalTo,
             description,
@@ -82,7 +92,7 @@ export const getBurnRateTool = tool({
         );
       }
 
-      const targetCurrency = currency || appContext.baseCurrency || "USD";
+      const targetCurrency = finalCurrency || "USD";
       const locale = appContext.locale || "en-US";
 
       // Fetch data in parallel
@@ -91,19 +101,17 @@ export const getBurnRateTool = tool({
           teamId,
           from: finalFrom,
           to: finalTo,
-          currency: currency ?? undefined,
+          currency: finalCurrency ?? undefined,
         }),
         getRunway(db, {
           teamId,
-          from: finalFrom,
-          to: finalTo,
-          currency: currency ?? undefined,
+          currency: finalCurrency ?? undefined,
         }),
         getSpending(db, {
           teamId,
           from: finalFrom,
           to: finalTo,
-          currency: currency ?? undefined,
+          currency: finalCurrency ?? undefined,
         }),
       ]);
 
@@ -197,8 +205,8 @@ export const getBurnRateTool = tool({
       const burnRateChangePeriod = `${burnRateData.length} months`;
 
       // Generate monthly chart data
-      const fromDate = startOfMonth(new Date(finalFrom));
-      const toDate = endOfMonth(new Date(finalTo));
+      const fromDate = startOfMonth(parseISO(finalFrom));
+      const toDate = endOfMonth(parseISO(finalTo));
       const monthSeries = eachMonthOfInterval({
         start: fromDate,
         end: toDate,

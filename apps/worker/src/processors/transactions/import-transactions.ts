@@ -20,7 +20,11 @@ const BATCH_SIZE = 500;
  * Then triggers embedding for imported transactions
  */
 export class ImportTransactionsProcessor extends BaseProcessor<ImportTransactionsPayload> {
-  async process(job: Job<ImportTransactionsPayload>): Promise<void> {
+  async process(job: Job<ImportTransactionsPayload>): Promise<{
+    importedCount: number;
+    skippedCount: number;
+    invalidCount: number;
+  }> {
     const { teamId, filePath, bankAccountId, currency, mappings, inverted } =
       job.data;
     const db = getDb();
@@ -38,11 +42,7 @@ export class ImportTransactionsProcessor extends BaseProcessor<ImportTransaction
       throw new Error("File path is required");
     }
 
-    await this.updateProgress(
-      job,
-      this.ProgressMilestones.FETCHED,
-      "Downloading file",
-    );
+    await this.updateProgress(job, this.ProgressMilestones.FETCHED);
 
     // Download file from Supabase storage with timeout
     const { data: fileData } = await withTimeout(
@@ -57,10 +57,13 @@ export class ImportTransactionsProcessor extends BaseProcessor<ImportTransaction
       throw new Error("File content is required");
     }
 
-    await this.updateProgress(job, 20);
+    await this.updateProgress(job, 20, undefined, "analyzing");
 
     const allTransactionIds: string[] = [];
+    let totalAttempted = 0;
+    let totalInvalid = 0;
 
+    let processedChunks = 0;
     await new Promise<void>((resolve, reject) => {
       // @ts-expect-error - Papa.parse overload resolution issue with string type
       Papa.parse(content, {
@@ -100,15 +103,35 @@ export class ImportTransactionsProcessor extends BaseProcessor<ImportTransaction
             (transaction) => transform({ transaction, inverted }),
           );
 
+          await this.updateProgress(job, 35, undefined, "transforming");
+
           const { validTransactions, invalidTransactions } =
             // @ts-expect-error - validateTransactions types may not match exactly
             validateTransactions(transformedTransactions);
+
+          await this.updateProgress(job, 45, undefined, "validating");
 
           if (invalidTransactions.length > 0) {
             this.logger.error("Invalid transactions", {
               invalidTransactions,
             });
           }
+
+          totalAttempted += validTransactions.length;
+          totalInvalid += invalidTransactions.length;
+
+          await this.updateProgress(
+            job,
+            Math.min(75, 50 + processedChunks * 5),
+            undefined,
+            "importing",
+          );
+
+          const totalImportBatches = Math.max(
+            1,
+            Math.ceil(validTransactions.length / BATCH_SIZE),
+          );
+          let completedImportBatches = 0;
 
           // Upsert transactions using db query function
           const results = await processBatch(
@@ -142,7 +165,7 @@ export class ImportTransactionsProcessor extends BaseProcessor<ImportTransaction
                 description: null,
                 balance: null,
                 note: null,
-                counterpartyName: null,
+                counterpartyName: t.counterparty_name ?? null,
                 merchantName: null,
                 assignedId: null,
                 internal: false,
@@ -163,9 +186,22 @@ export class ImportTransactionsProcessor extends BaseProcessor<ImportTransaction
                 teamId,
               });
 
+              completedImportBatches += 1;
+              const importingProgress =
+                50 +
+                Math.round((completedImportBatches / totalImportBatches) * 25);
+              await this.updateProgress(
+                job,
+                Math.min(75, importingProgress),
+                undefined,
+                "importing",
+              );
+
               return upserted;
             },
           );
+
+          processedChunks += 1;
 
           // Collect all transaction IDs
           const batchTransactionIds = results
@@ -180,7 +216,7 @@ export class ImportTransactionsProcessor extends BaseProcessor<ImportTransaction
       });
     });
 
-    await this.updateProgress(job, 80);
+    await this.updateProgress(job, 80, undefined, "finalizing");
 
     // Trigger embeddings for imported transactions
     if (allTransactionIds.length > 0) {
@@ -197,13 +233,21 @@ export class ImportTransactionsProcessor extends BaseProcessor<ImportTransaction
         },
         "transactions",
       );
+      await this.updateProgress(job, 90, undefined, "enriching");
     }
 
-    await this.updateProgress(job, 100);
+    await this.updateProgress(job, 100, undefined, "completed");
+
+    const importedCount = allTransactionIds.length;
+    const skippedCount = Math.max(0, totalAttempted - importedCount);
 
     this.logger.info("Import transactions completed", {
-      totalImported: allTransactionIds.length,
+      importedCount,
+      skippedCount,
+      invalidCount: totalInvalid,
       teamId,
     });
+
+    return { importedCount, skippedCount, invalidCount: totalInvalid };
   }
 }

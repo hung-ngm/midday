@@ -1,8 +1,10 @@
 {
   "extends": "@midday/tsconfig/base.json",
   "compilerOptions": {
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "bundler"
   },
-  "include": ["src", "."],
+  "include": ["src", ".", "images.d.ts"],
   "exclude": ["node_modules"]
 }

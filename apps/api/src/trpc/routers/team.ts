@@ -12,7 +12,9 @@ import {
   updateTeamMemberSchema,
 } from "@api/schemas/team";
 import { createTRPCRouter, protectedProcedure } from "@api/trpc/init";
-import type { DeleteTeamPayload, InviteTeamMembersPayload } from "@jobs/schema";
+import type { InviteTeamMembersPayload } from "@jobs/schema";
+import { chatCache } from "@midday/cache/chat-cache";
+import { teamCache } from "@midday/cache/team-cache";
 import {
   acceptTeamInvite,
   createTeam,
@@ -23,11 +25,14 @@ import {
   deleteTeamMember,
   getAvailablePlans,
   getBankConnections,
+  getInboxAccounts,
   getInvitesByEmail,
   getTeamById,
   getTeamInvites,
+  getTeamMemberRole,
   getTeamMembersByTeamId,
   getTeamsByUserId,
+  hasTeamAccess,
   leaveTeam,
   updateTeamById,
   updateTeamMember,
@@ -65,40 +70,21 @@ export const teamRouter = createTRPCRouter({
   create: protectedProcedure
     .input(createTeamSchema)
     .mutation(async ({ ctx: { db, session }, input }) => {
-      const requestId = `trpc_team_create_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-      console.log(`[${requestId}] TRPC team creation request`, {
+      const teamId = await createTeam(db, {
+        ...input,
         userId: session.user.id,
-        userEmail: session.user.email,
-        teamName: input.name,
-        baseCurrency: input.baseCurrency,
-        countryCode: input.countryCode,
-        switchTeam: input.switchTeam,
-        timestamp: new Date().toISOString(),
+        email: session.user.email!,
       });
 
-      try {
-        const teamId = await createTeam(db, {
-          ...input,
-          userId: session.user.id,
-          email: session.user.email!,
-        });
-
-        console.log(`[${requestId}] TRPC team creation successful`, {
-          teamId,
-          userId: session.user.id,
-        });
-
-        return teamId;
-      } catch (error) {
-        console.error(`[${requestId}] TRPC team creation failed`, {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-          userId: session.user.id,
-          input,
-        });
-        throw error;
+      if (input.switchTeam) {
+        try {
+          await teamCache.invalidateForUser(session.user.id);
+        } catch {
+          // Non-fatal — cache will expire naturally
+        }
       }
+
+      return teamId;
     }),
 
   leave: protectedProcedure
@@ -118,10 +104,18 @@ export const teamRouter = createTRPCRouter({
         throw Error("Action not allowed");
       }
 
-      return leaveTeam(db, {
+      const result = await leaveTeam(db, {
         userId: session.user.id,
         teamId: input.teamId,
       });
+
+      try {
+        await teamCache.invalidateForUser(session.user.id, input.teamId);
+      } catch {
+        // Non-fatal — cache will expire naturally
+      }
+
+      return result;
     }),
 
   acceptInvite: protectedProcedure
@@ -145,6 +139,48 @@ export const teamRouter = createTRPCRouter({
   delete: protectedProcedure
     .input(deleteTeamSchema)
     .mutation(async ({ ctx: { db, session }, input }) => {
+      // Check if the user has access to the team before deleting
+      const canAccess = await hasTeamAccess(db, input.teamId, session.user.id);
+
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have access to this team",
+        });
+      }
+
+      // Fetch team data BEFORE deleting (for cleanup job)
+      const team = await getTeamById(db, input.teamId);
+
+      if (!team) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Team not found",
+        });
+      }
+
+      const bankConnections = await getBankConnections(db, {
+        teamId: input.teamId,
+      });
+
+      // Trigger cleanup job BEFORE deleting team from database.
+      // This ensures that if job triggering fails (Redis down, queue unavailable),
+      // the team remains intact and the user can retry. The cleanup job will handle
+      // bank connection deletion. Subscription cancellation should be done manually
+      // by the user via the customer portal before deleting the team.
+      await triggerJob(
+        "delete-team",
+        {
+          teamId: input.teamId!,
+          connections: bankConnections.map((c) => ({
+            referenceId: c.referenceId,
+            provider: c.provider,
+            accessToken: c.accessToken,
+          })),
+        },
+        "teams",
+      );
+
       const data = await deleteTeam(db, {
         teamId: input.teamId,
         userId: session.user.id,
@@ -153,38 +189,113 @@ export const teamRouter = createTRPCRouter({
       if (!data) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
-          message: "Team not found",
+          message: "Failed to delete team",
         });
       }
 
-      const bankConnections = await getBankConnections(db, {
-        teamId: data.id,
-      });
-
-      if (bankConnections.length > 0) {
-        await tasks.trigger("delete-team", {
-          teamId: input.teamId!,
-          connections: bankConnections.map((connection) => ({
-            accessToken: connection.accessToken,
-            provider: connection.provider,
-            referenceId: connection.referenceId,
-          })),
-        } satisfies DeleteTeamPayload);
+      try {
+        await Promise.all([
+          chatCache.invalidateTeamContext(input.teamId),
+          ...data.memberUserIds.map((userId) =>
+            Promise.all([
+              teamCache.invalidateForUser(userId, input.teamId),
+              chatCache.invalidateUserContext(userId, input.teamId),
+            ]),
+          ),
+        ]);
+      } catch {
+        // Non-fatal — team deletion succeeded, cache will expire naturally
       }
     }),
 
   deleteMember: protectedProcedure
     .input(deleteTeamMemberSchema)
-    .mutation(async ({ ctx: { db }, input }) => {
-      return deleteTeamMember(db, {
+    .mutation(async ({ ctx: { db, session, teamId }, input }) => {
+      if (input.teamId !== teamId) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have access to this team",
+        });
+      }
+
+      const callerRole = await getTeamMemberRole(db, teamId!, session.user.id);
+
+      if (callerRole !== "owner") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only team owners can remove members",
+        });
+      }
+
+      // Prevent removing the last owner
+      const targetRole = await getTeamMemberRole(db, teamId!, input.userId);
+
+      if (targetRole === "owner") {
+        const teamMembers = await getTeamMembersByTeamId(db, teamId!);
+        const totalOwners = teamMembers?.filter(
+          (member) => member.role === "owner",
+        ).length;
+
+        if (totalOwners === 1) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Cannot remove the last team owner",
+          });
+        }
+      }
+
+      const result = await deleteTeamMember(db, {
         teamId: input.teamId,
         userId: input.userId,
       });
+
+      try {
+        await teamCache.invalidateForUser(input.userId, input.teamId);
+      } catch {
+        // Non-fatal — cache will expire naturally
+      }
+
+      return result;
     }),
 
   updateMember: protectedProcedure
     .input(updateTeamMemberSchema)
-    .mutation(async ({ ctx: { db }, input }) => {
+    .mutation(async ({ ctx: { db, session, teamId }, input }) => {
+      if (input.teamId !== teamId) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You don't have access to this team",
+        });
+      }
+
+      const callerRole = await getTeamMemberRole(db, teamId!, session.user.id);
+
+      if (callerRole !== "owner") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only team owners can update member roles",
+        });
+      }
+
+      // Prevent demoting the last owner to member
+      if (input.role === "member") {
+        const targetRole = await getTeamMemberRole(db, teamId!, input.userId);
+
+        if (targetRole === "owner") {
+          const teamMembers = await getTeamMembersByTeamId(db, teamId!);
+          const totalOwners = teamMembers?.filter(
+            (member) => member.role === "owner",
+          ).length;
+
+          if (totalOwners === 1) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Cannot demote the last team owner",
+            });
+          }
+        }
+      }
+
       return updateTeamMember(db, input);
     }),
 
@@ -264,4 +375,38 @@ export const teamRouter = createTRPCRouter({
         "transactions",
       );
     }),
+
+  /**
+   * Get unified connection status for the team.
+   * Returns raw connection data - presentation logic handled by client.
+   */
+  connectionStatus: protectedProcedure.query(
+    async ({ ctx: { db, teamId } }) => {
+      if (!teamId) {
+        return { bankConnections: [], inboxAccounts: [] };
+      }
+
+      // Fetch bank connections and inbox accounts in parallel
+      const [bankConnections, inboxAccounts] = await Promise.all([
+        getBankConnections(db, { teamId }),
+        getInboxAccounts(db, teamId),
+      ]);
+
+      return {
+        bankConnections: bankConnections.map((c) => ({
+          id: c.id,
+          name: c.name,
+          status: c.status,
+          expiresAt: c.expiresAt,
+          logoUrl: c.logoUrl,
+        })),
+        inboxAccounts: inboxAccounts.map((a) => ({
+          id: a.id,
+          email: a.email,
+          status: a.status,
+          provider: a.provider,
+        })),
+      };
+    },
+  ),
 });

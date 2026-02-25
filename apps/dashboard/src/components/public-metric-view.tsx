@@ -1,5 +1,11 @@
 "use client";
 
+import { cn } from "@midday/ui/cn";
+import { Icons } from "@midday/ui/icons";
+import NumberFlow from "@number-flow/react";
+import { useQuery } from "@tanstack/react-query";
+import { format, parseISO } from "date-fns";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatedNumber } from "@/components/animated-number";
 import { BurnRateChart } from "@/components/charts/burn-rate-chart";
 import {
@@ -14,11 +20,6 @@ import { StackedBarChart } from "@/components/charts/stacked-bar-chart";
 import type { ReportType } from "@/components/metrics/utils/chart-types";
 import { useTRPC } from "@/trpc/client";
 import { formatAmount } from "@/utils/format";
-import { cn } from "@midday/ui/cn";
-import NumberFlow from "@number-flow/react";
-import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Report {
   id: string;
@@ -114,7 +115,7 @@ function BurnRateChartView({ linkId }: { linkId: string }) {
     const average = values.reduce((sum, val) => sum + val, 0) / values.length;
 
     return burnRateData.map((item) => ({
-      month: format(new Date(item.date), "MMM"),
+      month: format(parseISO(item.date), "MMM"),
       amount: item.value,
       average,
       currentBurn: item.value,
@@ -122,9 +123,10 @@ function BurnRateChartView({ linkId }: { linkId: string }) {
     }));
   }, [burnRateData]);
 
-  const currentBurnRate = useMemo(() => {
+  const averageBurnRate = useMemo(() => {
     if (!burnRateData || burnRateData.length === 0) return 0;
-    return burnRateData[burnRateData.length - 1]!.value;
+    const values = burnRateData.map((item) => item.value);
+    return values.reduce((sum, val) => sum + val, 0) / values.length;
   }, [burnRateData]);
 
   return (
@@ -132,7 +134,7 @@ function BurnRateChartView({ linkId }: { linkId: string }) {
       <div className="mb-4">
         <p className="text-3xl font-normal mb-3">
           <AnimatedNumber
-            value={currentBurnRate}
+            value={averageBurnRate}
             currency={currency}
             maximumFractionDigits={0}
           />
@@ -140,7 +142,7 @@ function BurnRateChartView({ linkId }: { linkId: string }) {
         <div className="flex items-center gap-4">
           <div className="flex gap-2 items-center">
             <div className="w-2 h-2 bg-foreground" />
-            <span className="text-xs text-muted-foreground">Current</span>
+            <span className="text-xs text-muted-foreground">Monthly</span>
           </div>
           <div className="flex gap-2 items-center">
             <div
@@ -193,7 +195,7 @@ function MonthlyRevenueChartView({ linkId }: { linkId: string }) {
     const average = values.reduce((sum, val) => sum + val, 0) / values.length;
 
     return revenueData.result.map((item) => ({
-      month: format(new Date(item.date), "MMM"),
+      month: format(parseISO(item.date), "MMM"),
       amount: item.current.value,
       lastYearAmount: item.previous.value,
       average,
@@ -272,7 +274,7 @@ function ProfitChartView({ linkId }: { linkId: string }) {
       currentValues.reduce((sum, val) => sum + val, 0) / currentValues.length;
 
     return profitData.result.map((item) => ({
-      month: format(new Date(item.date), "MMM"),
+      month: format(parseISO(item.date), "MMM"),
       profit: item.current.value,
       lastYearProfit: item.previous.value,
       average,
@@ -331,7 +333,18 @@ function ExpensesChartView({ linkId }: { linkId: string }) {
             maximumFractionDigits={0}
           />
         </p>
-        <p className="text-xs text-muted-foreground">Average expenses</p>
+        <div className="flex items-center gap-4 mt-2">
+          <div className="flex gap-2 items-center">
+            <div className="w-2 h-2 rounded-full bg-[#C6C6C6] dark:bg-[#606060]" />
+            <span className="text-xs text-muted-foreground">Total</span>
+          </div>
+          <div className="flex gap-2 items-center">
+            <div className="w-2 h-2 flex items-center justify-center">
+              <Icons.DotRaster />
+            </div>
+            <span className="text-xs text-muted-foreground">Recurring</span>
+          </div>
+        </div>
       </div>
       <div className="h-80">
         {expenseData?.result && expenseData.result.length > 0 ? (
@@ -375,13 +388,13 @@ function RevenueForecastChartView({ linkId }: { linkId: string }) {
 
     return [
       ...historical.map((item, index) => ({
-        month: format(new Date(item.date), "MMM"),
+        month: format(parseISO(item.date), "MMM"),
         actual: item.value,
         forecasted: index === historical.length - 1 ? item.value : null,
         date: item.date,
       })),
       ...forecast.map((item) => ({
-        month: format(new Date(item.date), "MMM"),
+        month: format(parseISO(item.date), "MMM"),
         actual: null,
         forecasted: item.value,
         date: item.date,

@@ -1,11 +1,13 @@
 import type { Database } from "@midday/db/client";
 import { shouldSendNotification } from "@midday/db/queries";
+import InsightsWeeklyEmail from "@midday/email/emails/insights-weekly";
 import InvoiceEmail from "@midday/email/emails/invoice";
 import InvoiceOverdueEmail from "@midday/email/emails/invoice-overdue";
 import InvoicePaidEmail from "@midday/email/emails/invoice-paid";
 import InvoiceReminderEmail from "@midday/email/emails/invoice-reminder";
 import TransactionsEmail from "@midday/email/emails/transactions";
 import TransactionsExportedEmail from "@midday/email/emails/transactions-exported";
+import UpcomingInvoicesEmail from "@midday/email/emails/upcoming-invoices";
 import { render } from "@midday/email/render";
 import { nanoid } from "nanoid";
 import { type CreateEmailOptions, Resend } from "resend";
@@ -40,16 +42,15 @@ export class EmailService {
       };
     }
 
-    const emailPayloads = await Promise.all(
-      eligibleEmails.map((email) => this.#buildEmailPayload(email)),
-    );
-
-    // Check if any emails have attachments - batch send doesn't support attachments
-    const hasAttachments = emailPayloads.some(
-      (payload) => payload.attachments && payload.attachments.length > 0,
-    );
-
     try {
+      const emailPayloads = await Promise.all(
+        eligibleEmails.map((email) => this.#buildEmailPayload(email)),
+      );
+
+      // Check if any emails have attachments - batch send doesn't support attachments
+      const hasAttachments = emailPayloads.some(
+        (payload) => payload.attachments && payload.attachments.length > 0,
+      );
       let sent = 0;
       let failed = 0;
 
@@ -160,12 +161,14 @@ export class EmailService {
 
   #getTemplate(templateName: string) {
     const templates = {
+      "insights-weekly": InsightsWeeklyEmail,
       "invoice-overdue": InvoiceOverdueEmail,
       "invoice-paid": InvoicePaidEmail,
       invoice: InvoiceEmail,
       "invoice-reminder": InvoiceReminderEmail,
       transactions: TransactionsEmail,
       "transactions-exported": TransactionsExportedEmail,
+      "upcoming-invoices": UpcomingInvoicesEmail,
     };
 
     const template = templates[templateName as keyof typeof templates];

@@ -1,10 +1,10 @@
 "use client";
 
-import { useTransactionsStore } from "@/store/transactions";
 import { Button } from "@midday/ui/button";
 import { Checkbox } from "@midday/ui/checkbox";
 import { Icons } from "@midday/ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "@midday/ui/popover";
+import { useTransactionsStore } from "@/store/transactions";
 
 export function TransactionsColumnVisibility() {
   const { columns } = useTransactionsStore();
@@ -20,11 +20,7 @@ export function TransactionsColumnVisibility() {
       <PopoverContent className="w-[200px] p-0" align="end" sideOffset={8}>
         <div className="flex flex-col p-4 space-y-2 max-h-[352px] overflow-auto">
           {columns
-            .filter(
-              (column) =>
-                column.columnDef.enableHiding !== false &&
-                column.id !== "status",
-            )
+            .filter((column) => column.columnDef.enableHiding !== false)
             .map((column) => {
               return (
                 <div key={column.id} className="flex items-center space-x-2">

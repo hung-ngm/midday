@@ -1,14 +1,5 @@
 "use client";
 
-import { revalidateInbox } from "@/actions/revalidate-action";
-import { ConnectGmail } from "@/components/inbox/connect-gmail";
-import { ConnectOutlook } from "@/components/inbox/connect-outlook";
-import { ConnectSlack } from "@/components/inbox/connect-slack";
-import { ConnectWhatsApp } from "@/components/inbox/connect-whatsapp";
-import { useInboxParams } from "@/hooks/use-inbox-params";
-import { useRealtime } from "@/hooks/use-realtime";
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
 import { getInboxEmail } from "@midday/inbox";
 import {
   Accordion,
@@ -18,6 +9,16 @@ import {
 } from "@midday/ui/accordion";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { revalidateInbox } from "@/actions/revalidate-action";
+import { AppConnectionToast } from "@/components/app-connection-toast";
+import { ConnectGmail } from "@/components/inbox/connect-gmail";
+import { ConnectOutlook } from "@/components/inbox/connect-outlook";
+import { ConnectSlack } from "@/components/inbox/connect-slack";
+import { ConnectWhatsApp } from "@/components/inbox/connect-whatsapp";
+import { useInboxParams } from "@/hooks/use-inbox-params";
+import { useRealtime } from "@/hooks/use-realtime";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
 import { CopyInput } from "../copy-input";
 import { UploadZone } from "./inbox-upload-zone";
 
@@ -47,7 +48,7 @@ export function InboxGetStarted() {
   // When a webhook creates an inbox item, detect it and refresh the page
   useRealtime({
     channelName: "realtime_inbox_get_started",
-    event: "INSERT",
+    events: ["INSERT"],
     table: "inbox",
     filter: user?.teamId ? `team_id=eq.${user.teamId}` : undefined,
     onEvent: async (payload) => {
@@ -75,6 +76,7 @@ export function InboxGetStarted() {
 
   return (
     <UploadZone onUploadComplete={handleUpload}>
+      <AppConnectionToast />
       <div className="h-[calc(100vh-150px)] flex items-center justify-center">
         <div className="relative z-20 m-auto flex w-full max-w-[380px] flex-col">
           <div className="flex w-full flex-col relative">

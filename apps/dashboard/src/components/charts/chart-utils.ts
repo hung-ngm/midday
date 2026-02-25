@@ -2,7 +2,7 @@
  * Shared utilities for chart styling and data formatting
  */
 
-import { formatAmount } from "@/utils/format";
+import { format, parseISO } from "date-fns";
 
 // Tailwind classes for chart styling
 export const chartClasses = {
@@ -57,7 +57,10 @@ export const createCompactTickFormatter = () => {
 };
 
 // Currency-aware Y-axis tick formatter (e.g., "14k", "16k") - no currency symbol
-export const createYAxisTickFormatter = (currency: string, locale?: string) => {
+export const createYAxisTickFormatter = (
+  _currency: string,
+  _locale?: string,
+) => {
   return (value: number): string => {
     const absValue = Math.abs(value);
     const sign = value < 0 ? "-" : "";
@@ -81,6 +84,19 @@ export const createMonthsTickFormatter = () => {
     return `${value.toFixed(1)}mo`;
   };
 };
+
+/**
+ * Returns a domain config that ensures zero is always included,
+ * properly handling both positive and negative values.
+ * Use this for charts where values can go negative (profit, cash flow, growth rate).
+ */
+export const getZeroInclusiveDomain = (): [
+  (dataMin: number) => number,
+  (dataMax: number) => number,
+] => [
+  (dataMin: number) => Math.min(0, dataMin),
+  (dataMax: number) => Math.max(0, dataMax),
+];
 
 // Calculate Y-axis domain and ticks for forecast charts
 export const calculateYAxisDomain = <
@@ -169,6 +185,15 @@ export const useChartMargin = (
   };
 };
 
+/**
+ * Formats a date string for use as a chart X-axis label.
+ * Includes the year (e.g., "Jan '23") when the dataset spans more than 12 months
+ * to prevent duplicate labels which cause Recharts tooltip mismatches on hover.
+ */
+export function formatChartMonth(dateStr: string, totalMonths: number): string {
+  return format(parseISO(dateStr), totalMonths > 12 ? "MMM ''yy" : "MMM");
+}
+
 // Common chart props interface
 export interface BaseChartProps {
   data: any[];
@@ -193,7 +218,7 @@ export function getDateFromDataIndex(
   }
 
   if (typeof dateValue === "string") {
-    const parsed = new Date(dateValue);
+    const parsed = parseISO(dateValue);
     if (!Number.isNaN(parsed.getTime())) {
       return parsed;
     }

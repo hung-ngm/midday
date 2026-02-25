@@ -1,4 +1,4 @@
-import type { TZDate } from "@date-fns/tz";
+import { TZDate } from "@date-fns/tz";
 import {
   differenceInDays,
   differenceInMonths,
@@ -40,12 +40,21 @@ export function formatAmount({
     return;
   }
 
-  // Normalize currency code to ISO 4217 format
-  const normalizedCurrency = normalizeCurrencyCode(currency);
-
-  // Fix: locale can be null, but Intl.NumberFormat expects string | string[] | undefined
-  // So, if locale is null, pass undefined instead
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
   const safeLocale = locale ?? undefined;
+
+  const formatDecimal = () =>
+    Intl.NumberFormat(safeLocale, {
+      style: "decimal",
+      minimumFractionDigits: minimumFractionDigits ?? 2,
+      maximumFractionDigits: maximumFractionDigits ?? 2,
+    }).format(safeAmount);
+
+  if (currency.toUpperCase() === "XXX") {
+    return formatDecimal();
+  }
+
+  const normalizedCurrency = normalizeCurrencyCode(currency);
 
   try {
     return Intl.NumberFormat(safeLocale, {
@@ -53,19 +62,9 @@ export function formatAmount({
       currency: normalizedCurrency,
       minimumFractionDigits,
       maximumFractionDigits,
-    }).format(amount);
-  } catch (error) {
-    // Fallback to USD if currency is invalid
-    console.warn(
-      `Invalid currency code: ${currency} (normalized to ${normalizedCurrency}), falling back to USD`,
-      error,
-    );
-    return Intl.NumberFormat(safeLocale, {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits,
-      maximumFractionDigits,
-    }).format(amount);
+    }).format(safeAmount);
+  } catch {
+    return formatDecimal();
   }
 }
 
@@ -104,7 +103,10 @@ export function calculateAvgBurnRate(data: BurnRateData[] | null) {
 export function formatAccountName({
   name = "",
   currency,
-}: { name?: string; currency?: string | null }) {
+}: {
+  name?: string;
+  currency?: string | null;
+}) {
   if (currency) {
     return `${name} (${currency})`;
   }
@@ -140,11 +142,15 @@ export function formatDateRange(dates: TZDate[]): string {
 }
 
 export function getDueDateStatus(dueDate: string): string {
-  const now = new Date();
-  const due = new Date(dueDate);
+  // Parse due date as UTC (it's stored as UTC midnight)
+  const due = new TZDate(dueDate, "UTC");
 
-  // Set both dates to the start of their respective days
-  const nowDay = startOfDay(now);
+  // Get current date in UTC for consistent comparison
+  const now = new Date();
+  const nowUTC = new TZDate(now.toISOString(), "UTC");
+
+  // Compare at the day level in UTC
+  const nowDay = startOfDay(nowUTC);
   const dueDay = startOfDay(due);
 
   const diffDays = differenceInDays(dueDay, nowDay);

@@ -14,7 +14,7 @@ import {
   getSpendingSchema,
 } from "@api/schemas/reports";
 import { validateResponse } from "@api/utils/validate-response";
-import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { createRoute, OpenAPIHono } from "@hono/zod-openapi";
 import {
   getBurnRate,
   getExpenses,
@@ -177,12 +177,10 @@ app.openapi(
   async (c) => {
     const db = c.get("db");
     const teamId = c.get("teamId");
-    const { from, to, currency } = c.req.valid("query");
+    const { currency } = c.req.valid("query");
 
     const results = await getRunway(db, {
       teamId,
-      from,
-      to,
       currency,
     });
 

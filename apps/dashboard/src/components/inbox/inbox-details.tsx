@@ -1,25 +1,16 @@
-import { FileViewer } from "@/components/file-viewer";
-import { FormatAmount } from "@/components/format-amount";
-import { useFileUrl } from "@/hooks/use-file-url";
-import { useInboxFilterParams } from "@/hooks/use-inbox-filter-params";
-import { useInboxParams } from "@/hooks/use-inbox-params";
-import { useUserQuery } from "@/hooks/use-user";
-import { downloadFile } from "@/lib/download";
-import { useTRPC } from "@/trpc/client";
-import { getUrl } from "@/utils/environment";
-import { getWebsiteLogo } from "@/utils/logos";
 import { Avatar, AvatarFallback, AvatarImageNext } from "@midday/ui/avatar";
 import { Button } from "@midday/ui/button";
 import { cn } from "@midday/ui/cn";
 import { DialogTrigger } from "@midday/ui/dialog";
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
 } from "@midday/ui/dropdown-menu";
-import { DropdownMenu, DropdownMenuTrigger } from "@midday/ui/dropdown-menu";
 import { Icons } from "@midday/ui/icons";
 import { Separator } from "@midday/ui/separator";
 import { Skeleton } from "@midday/ui/skeleton";
@@ -37,6 +28,16 @@ import { MoreVertical, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useCopyToClipboard } from "usehooks-ts";
+import { FileViewer } from "@/components/file-viewer";
+import { FormatAmount } from "@/components/format-amount";
+import { useFileUrl } from "@/hooks/use-file-url";
+import { useInboxFilterParams } from "@/hooks/use-inbox-filter-params";
+import { useInboxParams } from "@/hooks/use-inbox-params";
+import { useUserQuery } from "@/hooks/use-user";
+import { downloadFile } from "@/lib/download";
+import { useTRPC } from "@/trpc/client";
+import { getUrl } from "@/utils/environment";
+import { getWebsiteLogo } from "@/utils/logos";
 import { EditInboxModal } from "../modals/edit-inbox-modal";
 import { DeleteInboxDialog } from "./delete-inbox-dialog";
 import { InboxActions } from "./inbox-actions";
@@ -51,17 +52,19 @@ export function InboxDetails() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [showFallback, setShowFallback] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const { data: user } = useUserQuery();
   const [, copy] = useCopyToClipboard();
 
   const id = params.inboxId;
 
-  const { data, isLoading } = useQuery(
+  const { data, isLoading, isError } = useQuery(
     trpc.inbox.getById.queryOptions(
       { id: id! },
       {
         enabled: !!id,
+        retry: false,
       },
     ),
   );
@@ -200,9 +203,11 @@ export function InboxDetails() {
   });
 
   const isProcessing = data?.status === "processing" || data?.status === "new";
+  const isOtherDocument = data?.status === "other" || data?.type === "other";
 
   useEffect(() => {
     setShowFallback(false);
+    setImageLoading(true);
   }, [data]);
 
   const handleCopyLink = () => {
@@ -237,6 +242,29 @@ export function InboxDetails() {
 
   if (isLoading) {
     return <InboxDetailsSkeleton />;
+  }
+
+  if (isError || (id && !data)) {
+    return (
+      <div className="h-[calc(100vh-125px)] border w-[614px] hidden md:flex shrink-0 -mt-[54px] items-center justify-center">
+        <div className="flex flex-col items-center justify-center gap-3 text-center max-w-[250px]">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-primary">Item not found</p>
+            <p className="text-xs text-[#878787]">
+              This item may have been deleted or you don't have access to it.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            onClick={() => setParams({ ...params, inboxId: null })}
+          >
+            Clear selection
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -285,22 +313,25 @@ export function InboxDetails() {
                   )}
                 </DropdownMenuItem>
 
-                <DropdownMenuItem
-                  onClick={handleRetryMatching}
-                  disabled={retryMatchingMutation.isPending}
-                >
-                  {retryMatchingMutation.isPending ? (
-                    <>
-                      <Icons.Refresh className="mr-2 size-4 animate-spin" />
-                      <span className="text-xs">Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Icons.Refresh className="mr-2 size-4" />
-                      <span className="text-xs">Retry Matching</span>
-                    </>
-                  )}
-                </DropdownMenuItem>
+                {/* Hide retry matching for "other" (non-financial) documents */}
+                {!isOtherDocument && (
+                  <DropdownMenuItem
+                    onClick={handleRetryMatching}
+                    disabled={retryMatchingMutation.isPending}
+                  >
+                    {retryMatchingMutation.isPending ? (
+                      <>
+                        <Icons.Refresh className="mr-2 size-4 animate-spin" />
+                        <span className="text-xs">Processing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Icons.Refresh className="mr-2 size-4" />
+                        <span className="text-xs">Retry Matching</span>
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                )}
 
                 <DropdownMenuItem>
                   <DialogTrigger className="w-full text-left flex items-center">
@@ -386,6 +417,9 @@ export function InboxDetails() {
                 <Skeleton className="h-[40px] w-[40px] rounded-full" />
               ) : (
                 <div className="relative">
+                  {data.website && imageLoading && (
+                    <Skeleton className="h-[40px] w-[40px] rounded-full absolute z-20" />
+                  )}
                   <Avatar>
                     {data.website && (
                       <AvatarImageNext
@@ -398,7 +432,11 @@ export function InboxDetails() {
                         )}
                         src={getWebsiteLogo(data.website)}
                         quality={100}
+                        onLoad={() => {
+                          setImageLoading(false);
+                        }}
                         onError={() => {
+                          setImageLoading(false);
                           setShowFallback(true);
                         }}
                       />
@@ -486,13 +524,23 @@ export function InboxDetails() {
 
           <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0 scrollbar-hide">
             {data?.filePath && (
-              <div className="min-h-0 flex-shrink-0">
-                <FileViewer
-                  mimeType={data.contentType}
-                  url={`${process.env.NEXT_PUBLIC_API_URL}/files/proxy?filePath=vault/${data?.filePath.join("/")}`}
-                  // If the order changes, the file viewer will remount otherwise the PDF worker will crash
-                  key={`${params.order}-${JSON.stringify(filterParams)}-primary`}
-                />
+              <div className="min-h-0 flex-shrink-0 h-full">
+                {/* Show skeleton while HEIC is being converted (browser can't render HEIC natively) */}
+                {data.contentType === "image/heic" && isProcessing ? (
+                  <Skeleton className="h-full w-full" />
+                ) : (
+                  <FileViewer
+                    // Use jpeg mimetype if heic (file was converted, contentType not yet updated)
+                    mimeType={
+                      data.contentType === "image/heic"
+                        ? "image/jpeg"
+                        : data.contentType
+                    }
+                    url={`${process.env.NEXT_PUBLIC_API_URL}/files/proxy?filePath=vault/${data?.filePath.join("/")}`}
+                    // Include contentType in key to remount after HEIC conversion (busts browser cache)
+                    key={`${params.order}-${JSON.stringify(filterParams)}-${data.contentType}-primary`}
+                  />
+                )}
               </div>
             )}
 
@@ -501,12 +549,27 @@ export function InboxDetails() {
               data.relatedItems.map(
                 (relatedItem) =>
                   relatedItem.filePath && (
-                    <div key={relatedItem.id} className="min-h-0 flex-shrink-0">
-                      <FileViewer
-                        mimeType={relatedItem.contentType}
-                        url={`${process.env.NEXT_PUBLIC_API_URL}/files/proxy?filePath=vault/${relatedItem.filePath.join("/")}`}
-                        key={`${relatedItem.id}-${params.order}-${JSON.stringify(filterParams)}`}
-                      />
+                    <div
+                      key={relatedItem.id}
+                      className="min-h-0 flex-shrink-0 h-full"
+                    >
+                      {/* Show skeleton while HEIC is being converted */}
+                      {relatedItem.contentType === "image/heic" &&
+                      isProcessing ? (
+                        <Skeleton className="h-full w-full" />
+                      ) : (
+                        <FileViewer
+                          // Use jpeg mimetype if heic (file was converted, contentType not yet updated)
+                          mimeType={
+                            relatedItem.contentType === "image/heic"
+                              ? "image/jpeg"
+                              : relatedItem.contentType
+                          }
+                          url={`${process.env.NEXT_PUBLIC_API_URL}/files/proxy?filePath=vault/${relatedItem.filePath.join("/")}`}
+                          // Include contentType in key to remount after HEIC conversion
+                          key={`${relatedItem.id}-${params.order}-${JSON.stringify(filterParams)}-${relatedItem.contentType}`}
+                        />
+                      )}
                     </div>
                   ),
               )}

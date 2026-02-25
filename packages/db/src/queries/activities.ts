@@ -1,8 +1,8 @@
-import type { Database } from "@db/client";
-import { activities } from "@db/schema";
-import type { activityStatusEnum, activityTypeEnum } from "@db/schema";
-import { and, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, ne } from "drizzle-orm";
 import type { SQL } from "drizzle-orm/sql/sql";
+import type { Database, DatabaseOrTransaction } from "../client";
+import type { activityStatusEnum, activityTypeEnum } from "../schema";
+import { activities } from "../schema";
 
 /**
  * Activity type returned from database queries
@@ -22,7 +22,7 @@ type CreateActivityParams = {
 };
 
 export async function createActivity(
-  db: Database,
+  db: DatabaseOrTransaction,
   params: CreateActivityParams,
 ) {
   const [result] = await db
@@ -101,6 +101,7 @@ export type GetActivitiesParams = {
   userId?: string | null;
   priority?: number | null;
   maxPriority?: number | null; // For filtering notifications (priority <= 3)
+  createdAfter?: string | null; // ISO timestamp to filter activities created after this time
 };
 
 export async function getActivities(db: Database, params: GetActivitiesParams) {
@@ -112,6 +113,7 @@ export async function getActivities(db: Database, params: GetActivitiesParams) {
     userId,
     priority,
     maxPriority,
+    createdAfter,
   } = params;
 
   // Convert cursor to offset
@@ -142,6 +144,11 @@ export async function getActivities(db: Database, params: GetActivitiesParams) {
   // Filter by max priority if specified (for notifications: priority <= 3)
   if (maxPriority) {
     whereConditions.push(lte(activities.priority, maxPriority));
+  }
+
+  // Filter by creation time if specified
+  if (createdAfter) {
+    whereConditions.push(gte(activities.createdAt, createdAfter));
   }
 
   // Execute the query with proper ordering and pagination

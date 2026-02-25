@@ -2,34 +2,32 @@ import { getWriter } from "@ai-sdk-tools/artifacts";
 import type { AppContext } from "@api/ai/agents/config/shared";
 import { runwayArtifact } from "@api/ai/artifacts/runway";
 import { generateArtifactDescription } from "@api/ai/utils/artifact-title";
-import { getToolDateDefaults } from "@api/ai/utils/tool-date-defaults";
+import { resolveToolParams } from "@api/ai/utils/period-dates";
 import { checkBankAccountsRequired } from "@api/ai/utils/tool-helpers";
+import { UTCDate } from "@date-fns/utc";
 import { db } from "@midday/db/client";
-import {
-  getBurnRate,
-  getCombinedAccountBalance,
-  getRunway,
-} from "@midday/db/queries";
+import { getBurnRate, getCashBalance, getRunway } from "@midday/db/queries";
 import { tool } from "ai";
+import { endOfMonth, format, startOfMonth, subMonths } from "date-fns";
 import { z } from "zod";
 
 const getRunwaySchema = z.object({
-  from: z.string().optional().describe("Start date (ISO 8601)"),
-  to: z.string().optional().describe("End date (ISO 8601)"),
-  currency: z
-    .string()
-    .describe("Currency code (ISO 4217, e.g. 'USD')")
-    .nullable()
-    .optional(),
-  showCanvas: z.boolean().default(false).describe("Show visual analytics"),
+  period: z
+    .enum(["3-months", "6-months", "this-year", "1-year", "2-years", "5-years"])
+    .optional()
+    .describe("Historical period"),
+  from: z.string().optional().describe("Start date (yyyy-MM-dd)"),
+  to: z.string().optional().describe("End date (yyyy-MM-dd)"),
+  currency: z.string().nullable().optional().describe("Currency code"),
+  showCanvas: z.boolean().default(false).describe("Show visual canvas"),
 });
 
 export const getRunwayTool = tool({
   description:
-    "Calculate cash runway in months - shows how many months the business can operate with current cash at current spending rate.",
+    "Calculate cash runway - months the business can operate with current cash.",
   inputSchema: getRunwaySchema,
   execute: async function* (
-    { from, to, currency, showCanvas },
+    { period, from, to, currency, showCanvas },
     executionOptions,
   ) {
     const appContext = executionOptions.experimental_context as AppContext;
@@ -51,10 +49,20 @@ export const getRunwayTool = tool({
     }
 
     try {
-      // Use fiscal year-aware defaults if dates not provided
-      const defaultDates = getToolDateDefaults(appContext.fiscalYearStartMonth);
-      const finalFrom = from ?? defaultDates.from;
-      const finalTo = to ?? defaultDates.to;
+      // Resolve parameters with proper priority:
+      // 1. Forced params from widget click (if this tool was triggered by widget)
+      // 2. Explicit AI params (user override)
+      // 3. Dashboard metricsFilter (source of truth)
+      // 4. Hardcoded defaults
+      const resolved = resolveToolParams({
+        toolName: "getRunway",
+        appContext,
+        aiParams: { period, from, to, currency },
+      });
+
+      const finalFrom = resolved.from;
+      const finalTo = resolved.to;
+      const finalCurrency = resolved.currency;
 
       // Generate description based on date range
       const description = generateArtifactDescription(finalFrom, finalTo);
@@ -66,7 +74,7 @@ export const getRunwayTool = tool({
         analysis = runwayArtifact.stream(
           {
             stage: "loading",
-            currency: currency || appContext.baseCurrency || "USD",
+            currency: finalCurrency || "USD",
             from: finalFrom,
             to: finalTo,
             description,
@@ -75,25 +83,32 @@ export const getRunwayTool = tool({
         );
       }
 
-      const targetCurrency = currency || appContext.baseCurrency || "USD";
+      const targetCurrency = finalCurrency || "USD";
+
+      // Fixed 6-month trailing window for burn rate — matches the window used
+      // inside getRunway so that chart projections are consistent with the
+      // headline runway number.
+      const burnRateToDate = endOfMonth(new UTCDate());
+      const burnRateFromDate = startOfMonth(subMonths(burnRateToDate, 5));
+      const burnRateFrom = format(burnRateFromDate, "yyyy-MM-dd");
+      const burnRateTo = format(burnRateToDate, "yyyy-MM-dd");
 
       // Fetch runway, cash balance, and burn rate data in parallel
+      // Runway uses a fixed 6-month trailing window internally (independent of date range)
       const [runway, balanceResult, burnRateData] = await Promise.all([
         getRunway(db, {
           teamId,
-          from: finalFrom,
-          to: finalTo,
-          currency: currency ?? undefined,
+          currency: finalCurrency ?? undefined,
         }),
-        getCombinedAccountBalance(db, {
+        getCashBalance(db, {
           teamId,
-          currency: currency ?? undefined,
+          currency: finalCurrency ?? undefined,
         }),
         getBurnRate(db, {
           teamId,
-          from: finalFrom,
-          to: finalTo,
-          currency: currency ?? undefined,
+          from: burnRateFrom,
+          to: burnRateTo,
+          currency: finalCurrency ?? undefined,
         }),
       ]);
 

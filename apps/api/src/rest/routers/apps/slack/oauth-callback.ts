@@ -1,6 +1,6 @@
 import { publicMiddleware } from "@api/rest/middleware";
 import type { Context } from "@api/rest/types";
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { config } from "@midday/app-store/slack";
 import {
   createSlackWebClient,
@@ -238,9 +238,8 @@ app.openapi(
         // Build redirect URL to dashboard
         const dashboardUrl =
           process.env.MIDDAY_DASHBOARD_URL || "https://app.midday.ai";
-        const redirectUrl = `${dashboardUrl}/all-done?event=app_oauth_completed`;
 
-        return c.redirect(redirectUrl, 302);
+        return c.redirect(`${dashboardUrl}/oauth-callback?status=success`, 302);
       }
 
       throw new HTTPException(500, {

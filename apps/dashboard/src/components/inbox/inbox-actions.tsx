@@ -1,23 +1,31 @@
 "use client";
 
+import type { RouterOutputs } from "@api/trpc/routers/_app";
 import { AnimatePresence } from "framer-motion";
 import { MatchTransaction } from "./match-transaction";
 import { SuggestedMatch } from "./suggested-match";
-
-import type { RouterOutputs } from "@api/trpc/routers/_app";
 
 type Props = {
   data: RouterOutputs["inbox"]["getById"];
 };
 
 export function InboxActions({ data }: Props) {
+  const isOtherDocument = data?.status === "other" || data?.type === "other";
+
+  if (isOtherDocument) {
+    return null;
+  }
+
+  const hasSuggestion =
+    data?.status === "suggested_match" &&
+    !data?.transactionId &&
+    !!data?.suggestion;
+
   return (
     <AnimatePresence>
-      {data?.status === "suggested_match" && !data?.transactionId && (
-        <SuggestedMatch key="suggested-match" />
-      )}
+      {hasSuggestion && <SuggestedMatch key="suggested-match" />}
 
-      {!data?.suggestion && <MatchTransaction key="match-transaction" />}
+      {!hasSuggestion && <MatchTransaction key="match-transaction" />}
     </AnimatePresence>
   );
 }

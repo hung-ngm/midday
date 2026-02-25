@@ -10,14 +10,12 @@ import { DocumentClient } from "@midday/documents";
 import { triggerJob, triggerJobAndWait } from "@midday/job-client";
 import { createClient } from "@midday/supabase/job";
 import type { Job } from "bullmq";
-import convert from "heic-convert";
-import sharp from "sharp";
 import type { ProcessAttachmentPayload } from "../../schemas/inbox";
 import { getDb } from "../../utils/db";
+import { NonRetryableError } from "../../utils/error-classification";
+import { convertHeicToJpeg } from "../../utils/image-processing";
 import { TIMEOUTS, withTimeout } from "../../utils/timeout";
 import { BaseProcessor } from "../base";
-
-const MAX_SIZE = 1500;
 
 export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentPayload> {
   async process(job: Job<ProcessAttachmentPayload>): Promise<void> {
@@ -36,6 +34,7 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
     const db = getDb();
 
     const fileName = filePath.join("/");
+    const filename = filePath.at(-1);
     let processedMimetype = mimetype;
 
     this.logger.info("Starting process-attachment job", {
@@ -48,142 +47,6 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
       inboxAccountId,
     });
 
-    // If the file is a HEIC we need to convert it to a JPG
-    if (mimetype === "image/heic") {
-      const heicStartTime = Date.now();
-      this.logger.info("Converting HEIC to JPG", {
-        filePath: fileName,
-        jobId: job.id,
-      });
-
-      const { data } = await withTimeout(
-        supabase.storage.from("vault").download(fileName),
-        TIMEOUTS.FILE_DOWNLOAD,
-        `File download timed out after ${TIMEOUTS.FILE_DOWNLOAD}ms`,
-      );
-
-      if (!data) {
-        throw new Error("File not found");
-      }
-
-      const buffer = await data.arrayBuffer();
-
-      // Edge case: Validate buffer is not empty
-      if (buffer.byteLength === 0) {
-        throw new Error("Downloaded file is empty");
-      }
-
-      // Try sharp first (handles HEIF/HEIC + mislabeled files like JPEG with .heic extension)
-      // Fall back to heic-convert only if sharp fails
-      let image: Buffer;
-      try {
-        this.logger.info("Attempting HEIC conversion with sharp", {
-          filePath: fileName,
-          jobId: job.id,
-        });
-        image = await sharp(Buffer.from(buffer))
-          .rotate()
-          .resize({ width: MAX_SIZE })
-          .toFormat("jpeg")
-          .toBuffer();
-        this.logger.info("Sharp successfully processed HEIC image", {
-          filePath: fileName,
-          jobId: job.id,
-        });
-      } catch (sharpError) {
-        this.logger.warn(
-          "Sharp failed to process HEIC, falling back to heic-convert",
-          {
-            filePath: fileName,
-            error:
-              sharpError instanceof Error
-                ? sharpError.message
-                : "Unknown error",
-          },
-        );
-
-        // Fall back to heic-convert for edge cases
-        let decodedImage: ArrayBuffer;
-        try {
-          decodedImage = await convert({
-            // @ts-ignore
-            buffer: new Uint8Array(buffer),
-            format: "JPEG",
-            quality: 1,
-          });
-        } catch (heicError) {
-          this.logger.error(
-            "Both sharp and heic-convert failed - file may be corrupted or unsupported format",
-            {
-              filePath: fileName,
-              sharpError:
-                sharpError instanceof Error
-                  ? sharpError.message
-                  : "Unknown error",
-              heicError:
-                heicError instanceof Error
-                  ? heicError.message
-                  : "Unknown error",
-            },
-          );
-          throw new Error(
-            `Failed to convert HEIC image: sharp error: ${sharpError instanceof Error ? sharpError.message : "Unknown"}, heic-convert error: ${heicError instanceof Error ? heicError.message : "Unknown"}`,
-          );
-        }
-
-        // Validate decoded image
-        if (!decodedImage || decodedImage.byteLength === 0) {
-          throw new Error("Decoded image is empty");
-        }
-
-        try {
-          image = await sharp(Buffer.from(decodedImage))
-            .rotate()
-            .resize({ width: MAX_SIZE })
-            .toFormat("jpeg")
-            .toBuffer();
-        } catch (finalSharpError) {
-          this.logger.error(
-            "Failed to process heic-convert output with sharp",
-            {
-              filePath: fileName,
-              error:
-                finalSharpError instanceof Error
-                  ? finalSharpError.message
-                  : "Unknown error",
-            },
-          );
-          throw new Error(
-            `Failed to process converted image: ${finalSharpError instanceof Error ? finalSharpError.message : "Unknown error"}`,
-          );
-        }
-      }
-
-      // Upload the converted image
-      const { data: uploadedData } = await withTimeout(
-        supabase.storage.from("vault").upload(fileName, image, {
-          contentType: "image/jpeg",
-          upsert: true,
-        }),
-        TIMEOUTS.FILE_UPLOAD,
-        `File upload timed out after ${TIMEOUTS.FILE_UPLOAD}ms`,
-      );
-
-      if (!uploadedData) {
-        throw new Error("Failed to upload converted image");
-      }
-
-      processedMimetype = "image/jpeg";
-      const heicDuration = Date.now() - heicStartTime;
-      this.logger.info("HEIC conversion completed", {
-        filePath: fileName,
-        jobId: job.id,
-        duration: `${heicDuration}ms`,
-      });
-    }
-
-    const filename = filePath.at(-1);
-
     // Edge case: Validate filename exists
     if (!filename || filename.trim().length === 0) {
       throw new Error("Invalid file path: filename is missing");
@@ -194,7 +57,7 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
       throw new Error(`Invalid file size: ${size} bytes`);
     }
 
-    // Check if inbox item already exists (for retry scenarios or manual uploads)
+    // Check if inbox item already exists FIRST (for retry scenarios or manual uploads)
     const inboxCheckStartTime = Date.now();
     this.logger.info("Checking for existing inbox item", {
       jobId: job.id,
@@ -217,6 +80,65 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
       duration: `${inboxCheckDuration}ms`,
     });
 
+    // Convert HEIC to JPEG if needed (do this after inbox check so we can update contentType immediately)
+    if (mimetype === "image/heic") {
+      const heicStartTime = Date.now();
+      this.logger.info("Converting HEIC to JPEG", {
+        filePath: fileName,
+        jobId: job.id,
+      });
+
+      const { data } = await withTimeout(
+        supabase.storage.from("vault").download(fileName),
+        TIMEOUTS.FILE_DOWNLOAD,
+        `File download timed out after ${TIMEOUTS.FILE_DOWNLOAD}ms`,
+      );
+
+      if (!data) {
+        throw new NonRetryableError("File not found", undefined, "validation");
+      }
+
+      const buffer = await data.arrayBuffer();
+
+      // Convert HEIC to JPEG using shared utility
+      const { buffer: image } = await convertHeicToJpeg(buffer, this.logger);
+
+      // Upload the converted image
+      const { data: uploadedData } = await withTimeout(
+        supabase.storage.from("vault").upload(fileName, image, {
+          contentType: "image/jpeg",
+          upsert: true,
+        }),
+        TIMEOUTS.FILE_UPLOAD,
+        `File upload timed out after ${TIMEOUTS.FILE_UPLOAD}ms`,
+      );
+
+      if (!uploadedData) {
+        throw new Error("Failed to upload converted image");
+      }
+
+      processedMimetype = "image/jpeg";
+      const heicDuration = Date.now() - heicStartTime;
+      this.logger.info("HEIC conversion completed", {
+        filePath: fileName,
+        jobId: job.id,
+        duration: `${heicDuration}ms`,
+      });
+
+      // Update contentType immediately if item exists (so frontend can show image sooner)
+      if (inboxData && inboxData.contentType === "image/heic") {
+        await updateInbox(db, {
+          id: inboxData.id,
+          teamId,
+          contentType: "image/jpeg",
+        });
+        this.logger.info("Updated contentType to jpeg", {
+          inboxId: inboxData.id,
+          jobId: job.id,
+        });
+      }
+    }
+
     // Create inbox item if it doesn't exist (for non-manual uploads)
     // or update existing item status if it was created manually
     if (!inboxData) {
@@ -230,7 +152,7 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
         teamId,
         filePath,
         fileName: filename ?? "Unknown",
-        contentType: mimetype,
+        contentType: processedMimetype, // Use processed mimetype (jpeg if converted from heic)
         size,
         referenceId,
         website,
@@ -354,7 +276,7 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
     });
 
     if (!signedUrlResult) {
-      throw new Error("File not found");
+      throw new NonRetryableError("File not found", undefined, "validation");
     }
 
     try {
@@ -385,9 +307,31 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
         jobId: job.id,
         inboxId: inboxData.id,
         resultType: result.type,
+        documentType: result.document_type,
         hasAmount: !!result.amount,
         duration: `${docProcessingDuration}ms`,
       });
+
+      // Check if document is classified as "other" (non-financial document)
+      if (result.document_type === "other") {
+        await updateInboxWithProcessedData(db, {
+          id: inboxData.id,
+          displayName: result.name ?? inboxData.displayName ?? undefined,
+          type: "other",
+          status: "other",
+        });
+
+        this.logger.info(
+          "Document classified as other (non-financial), skipping matching",
+          {
+            jobId: job.id,
+            inboxId: inboxData.id,
+            fileName,
+          },
+        );
+
+        return; // Skip embedding and transaction matching for non-financial documents
+      }
 
       await updateInboxWithProcessedData(db, {
         id: inboxData.id,
@@ -439,6 +383,7 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
           teamId,
         },
         "documents",
+        { jobId: `process-doc_${teamId}_${filePath.join("/")}` },
       )
         .then((result) => {
           this.logger.info("Triggered process-document job", {
@@ -612,7 +557,8 @@ export class ProcessAttachmentProcessor extends BaseProcessor<ProcessAttachmentP
         inboxId: inboxData.id,
         error: error instanceof Error ? error.message : "Unknown error",
         referenceId,
-        mimetype,
+        mimetype: processedMimetype,
+        originalMimetype: mimetype,
       });
 
       // Re-throw timeout errors to trigger retry

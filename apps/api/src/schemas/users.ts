@@ -1,13 +1,10 @@
 import { z } from "@hono/zod-openapi";
+import { isValidTimezone } from "@midday/location/timezones";
 
 export const updateUserSchema = z.object({
   fullName: z.string().min(2).max(32).optional().openapi({
     description: "Full name of the user. Must be between 2 and 32 characters",
     example: "Jane Doe",
-  }),
-  teamId: z.string().optional().openapi({
-    description: "Unique identifier of the team the user belongs to",
-    example: "team-abc123",
   }),
   email: z.string().email().optional().openapi({
     description: "Email address of the user",
@@ -35,10 +32,18 @@ export const updateUserSchema = z.object({
       "Whether the user's calendar week starts on Monday (true) or Sunday (false)",
     example: true,
   }),
-  timezone: z.string().optional().openapi({
-    description: "User's timezone identifier in IANA Time Zone Database format",
-    example: "America/New_York",
-  }),
+  timezone: z
+    .string()
+    .refine(isValidTimezone, {
+      message:
+        "Invalid timezone. Use IANA timezone format (e.g., 'America/New_York', 'UTC')",
+    })
+    .optional()
+    .openapi({
+      description:
+        "User's timezone identifier in IANA Time Zone Database format",
+      example: "America/New_York",
+    }),
   timezoneAutoSync: z.boolean().optional().openapi({
     description: "Whether to automatically sync timezone with browser timezone",
     example: true,

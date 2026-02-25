@@ -7,8 +7,8 @@ import {
   applyReceiptFixes,
   validateReceiptConsistency,
 } from "../../utils/cross-field-validation";
-import { detectReceiptFormat } from "../../utils/format-detection";
 import type { DocumentFormat } from "../../utils/format-detection";
+import { detectReceiptFormat } from "../../utils/format-detection";
 import {
   calculateReceiptExtractionConfidence,
   mergeReceiptResults,
@@ -135,6 +135,7 @@ export class ReceiptProcessor extends BaseExtractionEngine<
       ...result.data,
       website,
       type: "expense",
+      document_type: result.data.document_type,
       date: result.data.date,
       amount: result.data.total_amount,
       currency: result.data.currency,

@@ -14,7 +14,7 @@ import { resend } from "@api/services/resend";
 import { verifyAccessToken } from "@api/utils/auth";
 import { validateClientCredentials } from "@api/utils/oauth";
 import { validateResponse } from "@api/utils/validate-response";
-import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { createRoute, OpenAPIHono } from "@hono/zod-openapi";
 import type { Database } from "@midday/db/client";
 import {
   createAuthorizationCode,
@@ -27,9 +27,12 @@ import {
 } from "@midday/db/queries";
 import { AppInstalledEmail } from "@midday/email/emails/app-installed";
 import { render } from "@midday/email/render";
-import { rateLimiter } from "hono-rate-limiter";
+import { createLoggerWithContext } from "@midday/logger";
 import { HTTPException } from "hono/http-exception";
+import { rateLimiter } from "hono-rate-limiter";
 import { z } from "zod";
+
+const logger = createLoggerWithContext("rest:oauth");
 
 const app = new OpenAPIHono<Context>();
 
@@ -299,7 +302,9 @@ app.openapi(
       }
     } catch (error) {
       // Log error but don't fail the OAuth flow
-      console.error("Failed to send app installation email:", error);
+      logger.error("Failed to send app installation email", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     // Build success redirect URL

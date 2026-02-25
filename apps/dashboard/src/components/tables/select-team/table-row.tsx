@@ -1,13 +1,13 @@
 "use client";
 
-import { revalidateAfterTeamChange } from "@/actions/revalidate-action";
-import { useTRPC } from "@/trpc/client";
 import type { RouterOutputs } from "@api/trpc/routers/_app";
 import { Avatar, AvatarFallback, AvatarImageNext } from "@midday/ui/avatar";
 import { SubmitButton } from "@midday/ui/submit-button";
 import { TableRow as BaseTableRow, TableCell } from "@midday/ui/table";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { revalidateAfterTeamChange } from "@/actions/revalidate-action";
+import { useTRPC } from "@/trpc/client";
 
 type Props = {
   row: RouterOutputs["team"]["list"][number];
@@ -19,7 +19,7 @@ export function TableRow({ row }: Props) {
   const trpc = useTRPC();
 
   const changeTeamMutation = useMutation(
-    trpc.user.update.mutationOptions({
+    trpc.user.switchTeam.mutationOptions({
       onMutate: () => {
         setIsLoading(true);
       },

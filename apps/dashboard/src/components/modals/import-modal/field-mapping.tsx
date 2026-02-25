@@ -1,12 +1,5 @@
 "use client";
 
-import { generateCsvMapping } from "@/actions/ai/generate-csv-mapping";
-import { SelectAccount } from "@/components/select-account";
-import { SelectCurrency } from "@/components/select-currency";
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
-import { formatAmount } from "@/utils/format";
-import { readStreamableValue } from "@ai-sdk/rsc";
 import { formatAmountValue, formatDate } from "@midday/import";
 import {
   Accordion,
@@ -33,18 +26,32 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@midday/ui/tooltip";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { capitalCase } from "change-case";
 import { useEffect, useRef, useState } from "react";
 import { Controller, useWatch } from "react-hook-form";
+import { SelectAccount } from "@/components/select-account";
+import { SelectCurrency } from "@/components/select-currency";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
+import { formatAmount } from "@/utils/format";
 import { mappableFields, useCsvContext } from "./context";
+import {
+  getBalanceFromLatestDate,
+  isActiveRequest,
+  shouldApplyMappedColumn,
+} from "./field-mapping.utils";
 
 export function FieldMapping({ currencies }: { currencies: string[] }) {
   const { fileColumns, firstRows, setValue, control, watch } = useCsvContext();
   const [isStreaming, setIsStreaming] = useState(false);
   const [showCurrency, setShowCurrency] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const mappingRequestIdRef = useRef(0);
   const trpc = useTRPC();
+  const { mutateAsync: generateCsvMapping } = useMutation(
+    trpc.transactions.generateCsvMapping.mutationOptions(),
+  );
   const { data: bankAccounts } = useQuery(trpc.bankAccounts.get.queryOptions());
   // Use ref to access latest bankAccounts without triggering effect
   const bankAccountsRef = useRef(bankAccounts);
@@ -74,35 +81,32 @@ export function FieldMapping({ currencies }: { currencies: string[] }) {
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+    const requestId = mappingRequestIdRef.current + 1;
+    mappingRequestIdRef.current = requestId;
 
-    generateCsvMapping(fileColumns, firstRows)
-      .then(async ({ object }) => {
+    generateCsvMapping({
+      fieldColumns: fileColumns,
+      firstRows,
+    })
+      .then((finalMapping) => {
         try {
-          let finalMapping: Record<string, string> = {};
+          if (
+            abortController.signal.aborted ||
+            !isActiveRequest(requestId, mappingRequestIdRef)
+          ) {
+            return;
+          }
 
-          for await (const partialObject of readStreamableValue(object)) {
-            if (abortController.signal.aborted) {
-              break;
+          for (const [field, value] of Object.entries(finalMapping)) {
+            if (shouldApplyMappedColumn(field, value, fileColumns)) {
+              setValue(field, value, {
+                shouldValidate: true,
+              });
             }
+          }
 
-            if (partialObject) {
-              // Merge partial updates into final mapping
-              finalMapping = { ...finalMapping, ...partialObject };
-
-              // Process field mappings as they come in
-              for (const [field, value] of Object.entries(partialObject)) {
-                if (
-                  Object.keys(mappableFields).includes(field) &&
-                  value &&
-                  typeof value === "string" &&
-                  fileColumns.includes(value)
-                ) {
-                  setValue(field as keyof typeof mappableFields, value, {
-                    shouldValidate: true,
-                  });
-                }
-              }
-            }
+          if (!isActiveRequest(requestId, mappingRequestIdRef)) {
+            return;
           }
 
           // Process currency after stream completes
@@ -151,21 +155,25 @@ export function FieldMapping({ currencies }: { currencies: string[] }) {
             }
           }
         } catch (streamError) {
-          console.error("Error reading stream:", streamError);
+          console.error("Error handling CSV mapping response:", streamError);
         }
       })
       .catch((error) => {
-        console.error("Error generating CSV mapping:", error);
+        if (isActiveRequest(requestId, mappingRequestIdRef)) {
+          console.error("Error generating CSV mapping:", error);
+        }
       })
       .finally(() => {
-        setIsStreaming(false);
-        abortControllerRef.current = null;
+        if (isActiveRequest(requestId, mappingRequestIdRef)) {
+          setIsStreaming(false);
+          abortControllerRef.current = null;
+        }
       });
 
     return () => {
       abortController.abort();
     };
-  }, [fileColumns, firstRows, setValue]);
+  }, [fileColumns, firstRows]);
 
   return (
     <div className="mt-6">
@@ -300,12 +308,40 @@ function FieldRow({
   // Use useWatch for better reactivity when values change
   const value = useWatch({ control, name: field });
   const inverted = useWatch({ control, name: "inverted" });
+  const dateColumn = useWatch({ control, name: "date" });
 
   const isLoading = isStreaming && !value;
 
   const firstRow = firstRows?.at(0);
 
-  const description = value && firstRow ? firstRow[value as string] : undefined;
+  // For balance: use value from row with latest date (current balance)
+  const balanceFromLatestDate =
+    field === "balance" && value && dateColumn && firstRows
+      ? getBalanceFromLatestDate(firstRows, dateColumn, value)
+      : undefined;
+
+  // For other fields, use first row; for balance use row with latest date
+  const description =
+    field === "balance" && balanceFromLatestDate
+      ? balanceFromLatestDate
+      : value && firstRow
+        ? firstRow[value as string]
+        : undefined;
+
+  // For description and counterparty: collect up to 5 unique values from rows
+  const isDescriptionOrCounterparty =
+    field === "description" || field === "counterparty";
+  const exampleValues: string[] =
+    value && firstRows && isDescriptionOrCounterparty
+      ? Array.from(
+          new Set(
+            firstRows
+              .slice(0, 5)
+              .map((row) => row[value as string]?.trim())
+              .filter((v): v is string => Boolean(v)),
+          ),
+        ).slice(0, 5)
+      : [];
 
   // Check if date field has valid parseable date
   const isDateInvalid =
@@ -341,8 +377,8 @@ function FieldRow({
     if (field === "balance") {
       const amount = formatAmountValue({ amount: description });
 
-      // Always invert the amount for balance
-      const balance = +(amount * -1);
+      // Balance is always displayed as positive (absolute value)
+      const balance = Math.abs(amount);
 
       if (currency) {
         return formatAmount({
@@ -421,7 +457,7 @@ function FieldRow({
         <div className="grow whitespace-nowrap text-sm font-normal text-muted-foreground justify-between flex">
           <span>{label}</span>
 
-          {description?.trim() && (
+          {(description?.trim() || exampleValues.length > 0) && (
             <TooltipProvider delayDuration={50}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -433,8 +469,19 @@ function FieldRow({
                     )}
                   </button>
                 </TooltipTrigger>
-                <TooltipContent className="p-2 text-xs">
-                  {getErrorMessage() ?? formatDescription(description)}
+                <TooltipContent className="max-w-[200px] p-2 text-xs">
+                  {getErrorMessage() ??
+                    (exampleValues.length > 0 ? (
+                      <span className="block whitespace-pre-line">
+                        {exampleValues
+                          .map((val) =>
+                            field === "description" ? capitalCase(val) : val,
+                          )
+                          .join("\n")}
+                      </span>
+                    ) : (
+                      formatDescription(description ?? "")
+                    ))}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

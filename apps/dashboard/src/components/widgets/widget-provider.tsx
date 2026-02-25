@@ -2,7 +2,7 @@
 
 import type { AppRouter } from "@midday/api/trpc/routers/_app";
 import type { inferRouterOutputs } from "@trpc/server";
-import { type ReactNode, createContext, useContext, useRef } from "react";
+import { createContext, type ReactNode, useContext, useRef } from "react";
 import { useStore } from "zustand";
 import { devtools } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
@@ -66,8 +66,8 @@ export const createWidgetStore = (initialPreferences?: WidgetPreferences) => {
           ),
 
         reorderPrimaryWidgets: (newOrder) => {
-          if (newOrder.length > 8) {
-            console.warn("Cannot have more than 8 primary widgets");
+          if (newOrder.length > 7) {
+            console.warn("Cannot have more than 7 primary widgets");
             return;
           }
           set({ primaryWidgets: newOrder }, false, "reorderPrimaryWidgets");
@@ -111,7 +111,7 @@ export const createWidgetStore = (initialPreferences?: WidgetPreferences) => {
 
         swapWithLastPrimary: (widgetId: WidgetType, insertAtIndex: number) => {
           const state = get();
-          if (state.primaryWidgets.length < 8) {
+          if (state.primaryWidgets.length < 7) {
             console.warn("Swap only needed when primary is full");
             return;
           }
@@ -147,7 +147,6 @@ export const createWidgetStore = (initialPreferences?: WidgetPreferences) => {
       }),
       {
         name: "widget-store",
-        skipHydration: true,
       },
     ),
   );

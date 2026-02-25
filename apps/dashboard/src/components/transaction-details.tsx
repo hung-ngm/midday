@@ -1,9 +1,5 @@
 "use client";
 
-import { useInvalidateTransactionQueries } from "@/hooks/use-invalidate-transaction-queries";
-import { useTransactionParams } from "@/hooks/use-transaction-params";
-import { useUpdateTransactionCategory } from "@/hooks/use-update-transaction-category";
-import { useTRPC } from "@/trpc/client";
 import {
   Accordion,
   AccordionContent,
@@ -26,7 +22,11 @@ import { ToastAction } from "@midday/ui/toast";
 import { toast } from "@midday/ui/use-toast";
 import { getTaxTypeLabel } from "@midday/utils/tax";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
+import { useInvalidateTransactionQueries } from "@/hooks/use-invalidate-transaction-queries";
+import { useTransactionParams } from "@/hooks/use-transaction-params";
+import { useUpdateTransactionCategory } from "@/hooks/use-update-transaction-category";
+import { useTRPC } from "@/trpc/client";
 import { AssignUser } from "./assign-user";
 import { FormatAmount } from "./format-amount";
 import { Note } from "./note";
@@ -52,11 +52,14 @@ export function TransactionDetails() {
     },
   });
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading } = useQuery({
     ...trpc.transactions.getById.queryOptions({ id: transactionId! }),
     enabled: Boolean(transactionId),
-    staleTime: 0, // Always consider data stale so it always refetches
-    initialData: () => {
+    staleTime: 30 * 1000, // 30 seconds - prevents excessive refetches when reopening
+    // Use placeholderData instead of initialData to show cached list data while fetching
+    // This ensures React Query always fetches fresh data (including suggestion details)
+    // while still providing immediate UI feedback from the list cache
+    placeholderData: () => {
       const pages = queryClient
         .getQueriesData({ queryKey: trpc.transactions.get.infiniteQueryKey() })
         // @ts-expect-error
@@ -216,7 +219,7 @@ export function TransactionDetails() {
 
   const updateTransactionsMutation = useMutation(
     trpc.transactions.updateMany.mutationOptions({
-      onSuccess: (_, data) => {
+      onSuccess: (_, _data) => {
         queryClient.invalidateQueries({
           queryKey: trpc.transactions.getById.queryKey({ id: transactionId! }),
         });
@@ -260,7 +263,7 @@ export function TransactionDetails() {
                 />
               )}
               <span className="text-[#606060] text-xs select-text">
-                {data?.date && format(new Date(data.date), "MMM d, y")}
+                {data?.date && format(parseISO(data.date), "MMM d, y")}
               </span>
             </div>
           )}

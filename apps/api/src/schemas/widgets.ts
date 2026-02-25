@@ -2,8 +2,6 @@ import { WIDGET_TYPES } from "@midday/cache/widget-preferences-cache";
 import { z } from "zod";
 
 export const getRunwaySchema = z.object({
-  from: z.string(),
-  to: z.string(),
   currency: z.string().optional(),
 });
 
@@ -71,6 +69,10 @@ export const getVaultActivitySchema = z.object({
 });
 
 export const getAccountBalancesSchema = z.object({
+  currency: z.string().optional(),
+});
+
+export const getNetPositionSchema = z.object({
   currency: z.string().optional(),
 });
 

@@ -1,16 +1,22 @@
 import {
   createBankAccountSchema,
   deleteBankAccountSchema,
+  getBankAccountDetailsSchema,
   getBankAccountsSchema,
+  getTransactionCountSchema,
   updateBankAccountSchema,
 } from "@api/schemas/bank-accounts";
 import { createTRPCRouter, protectedProcedure } from "@api/trpc/init";
+import { chatCache } from "@midday/cache/chat-cache";
 import {
   createBankAccount,
   deleteBankAccount,
+  getBankAccountDetails,
   getBankAccounts,
   getBankAccountsBalances,
   getBankAccountsCurrencies,
+  getBankAccountsWithPaymentInfo,
+  getTransactionCountByBankAccountId,
   updateBankAccount,
 } from "@midday/db/queries";
 
@@ -25,6 +31,42 @@ export const bankAccountsRouter = createTRPCRouter({
       });
     }),
 
+  getTransactionCount: protectedProcedure
+    .input(getTransactionCountSchema)
+    .query(async ({ input, ctx: { db, teamId } }) => {
+      const count = await getTransactionCountByBankAccountId(db, {
+        bankAccountId: input.id,
+        teamId: teamId!,
+      });
+      return { count };
+    }),
+
+  /**
+   * Get decrypted account details (IBAN, account number, etc.)
+   * Only call this when user explicitly requests to reveal account details.
+   */
+  getDetails: protectedProcedure
+    .input(getBankAccountDetailsSchema)
+    .query(async ({ input, ctx: { db, teamId } }) => {
+      return getBankAccountDetails(db, {
+        accountId: input.id,
+        teamId: teamId!,
+      });
+    }),
+
+  /**
+   * Get bank accounts with payment info (IBAN, routing numbers, etc.)
+   * Used for invoice payment details slash command.
+   * Only returns accounts that have at least one payment field populated.
+   */
+  getWithPaymentInfo: protectedProcedure.query(
+    async ({ ctx: { db, teamId } }) => {
+      return getBankAccountsWithPaymentInfo(db, {
+        teamId: teamId!,
+      });
+    },
+  ),
+
   currencies: protectedProcedure.query(async ({ ctx: { db, teamId } }) => {
     return getBankAccountsCurrencies(db, teamId!);
   }),
@@ -36,10 +78,18 @@ export const bankAccountsRouter = createTRPCRouter({
   delete: protectedProcedure
     .input(deleteBankAccountSchema)
     .mutation(async ({ input, ctx: { db, teamId } }) => {
-      return deleteBankAccount(db, {
+      const result = await deleteBankAccount(db, {
         id: input.id,
         teamId: teamId!,
       });
+
+      try {
+        await chatCache.invalidateTeamContext(teamId!);
+      } catch {
+        // Non-fatal — cache will expire naturally
+      }
+
+      return result;
     }),
 
   update: protectedProcedure
@@ -55,11 +105,19 @@ export const bankAccountsRouter = createTRPCRouter({
   create: protectedProcedure
     .input(createBankAccountSchema)
     .mutation(async ({ input, ctx: { db, teamId, session } }) => {
-      return createBankAccount(db, {
+      const result = await createBankAccount(db, {
         ...input,
         teamId: teamId!,
         userId: session.user.id,
         manual: input.manual,
       });
+
+      try {
+        await chatCache.invalidateTeamContext(teamId!);
+      } catch {
+        // Non-fatal — cache will expire naturally
+      }
+
+      return result;
     }),
 });

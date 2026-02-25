@@ -3,7 +3,7 @@ import { Logo } from "./assets/logo";
 export default {
   name: "Dropbox",
   id: "dropbox",
-  category: "Storage",
+  category: "storage",
   active: false,
   logo: Logo,
   short_description:
@@ -11,4 +11,3 @@ export default {
   description: null,
   images: [],
 };
-

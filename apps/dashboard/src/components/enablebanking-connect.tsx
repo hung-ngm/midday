@@ -1,47 +1,56 @@
-import { createEnableBankingLinkAction } from "@/actions/institutions/create-enablebanking-link";
 import { isDesktopApp } from "@midday/desktop-client/platform";
 import { useToast } from "@midday/ui/use-toast";
-import { useAction } from "next-safe-action/hooks";
+import { useMutation } from "@tanstack/react-query";
+import { useTRPC } from "@/trpc/client";
 import { BankConnectButton } from "./bank-connect-button";
 
 type Props = {
-  id: string;
+  institutionId: string;
+  countryCode?: string;
   onSelect: () => void;
-  maximumConsentValidity: number;
-  country: string;
-  type?: "personal" | "business";
+  redirectPath?: string;
+  connectRef?: React.MutableRefObject<(() => void) | null>;
 };
 
 export function EnableBankingConnect({
   onSelect,
-  id,
-  maximumConsentValidity,
-  country,
-  type,
+  institutionId,
+  countryCode,
+  redirectPath,
+  connectRef,
 }: Props) {
   const { toast } = useToast();
+  const trpc = useTRPC();
 
-  const createEnableBankingLink = useAction(createEnableBankingLinkAction, {
-    onError: () => {
+  const createLink = useMutation(
+    trpc.banking.enablebankingLink.mutationOptions({}),
+  );
+
+  const handleOnSelect = async () => {
+    onSelect();
+
+    try {
+      const desktopOrWeb = isDesktopApp() ? "desktop" : "web";
+      const stateParts = [desktopOrWeb, "connect"];
+      if (redirectPath) {
+        stateParts.push(encodeURIComponent(redirectPath));
+      }
+
+      const linkData = await createLink.mutateAsync({
+        institutionId,
+        countryCode,
+        state: stateParts.join(":"),
+      });
+
+      window.location.href = linkData.data.url;
+    } catch {
       toast({
         duration: 3500,
         variant: "error",
         title: "Something went wrong please try again.",
       });
-    },
-  });
-
-  const handleOnSelect = () => {
-    onSelect();
-
-    createEnableBankingLink.execute({
-      institutionId: id,
-      maximumConsentValidity,
-      country: country === "" ? null : country,
-      isDesktop: isDesktopApp(),
-      type: type ?? "business",
-    });
+    }
   };
 
-  return <BankConnectButton onClick={handleOnSelect} />;
+  return <BankConnectButton onClick={handleOnSelect} connectRef={connectRef} />;
 }

@@ -1,19 +1,19 @@
 "use client";
 
-import { useLatestProjectId } from "@/hooks/use-latest-project-id";
-import { useTrackerParams } from "@/hooks/use-tracker-params";
-import { useUserQuery } from "@/hooks/use-user";
-import { NEW_EVENT_ID, parseTimeWithMidnightCrossing } from "@/utils/tracker";
 import { TZDate } from "@date-fns/tz";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Form, FormControl, FormField, FormItem } from "@midday/ui/form";
-import { Input } from "@midday/ui/input";
 import { SubmitButton } from "@midday/ui/submit-button";
+import { Textarea } from "@midday/ui/textarea";
 import { TimeRangeInput } from "@midday/ui/time-range-input";
 import { startOfDay } from "date-fns";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod/v3";
+import { useLatestProjectId } from "@/hooks/use-latest-project-id";
+import { useTrackerParams } from "@/hooks/use-tracker-params";
+import { useUserQuery } from "@/hooks/use-user";
+import { NEW_EVENT_ID, parseTimeWithMidnightCrossing } from "@/utils/tracker";
 import { AssignUser } from "../assign-user";
 import { TrackerSelectProject } from "../tracker-select-project";
 
@@ -54,8 +54,8 @@ export function TrackerEntriesForm({
   onTimeChange,
 }: Props) {
   const { projectId: selectedProjectId } = useTrackerParams();
-  const { latestProjectId } = useLatestProjectId();
   const { data: user } = useUserQuery();
+  const { latestProjectId } = useLatestProjectId(user?.teamId);
 
   // Helper to get user timezone with fallback
   const getUserTimezone = () => user?.timezone || "UTC";
@@ -131,7 +131,7 @@ export function TrackerEntriesForm({
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(onCreate)}
-        className="mb-12 mt-6 space-y-4"
+        className="mb-4 mt-6 space-y-4"
       >
         <TimeRangeInput
           value={{ start: form.watch("start"), stop: form.watch("stop") }}
@@ -197,7 +197,13 @@ export function TrackerEntriesForm({
           render={({ field }) => (
             <FormItem>
               <FormControl>
-                <Input placeholder="Description" {...field} />
+                <Textarea
+                  {...field}
+                  value={field.value || ""}
+                  placeholder="Description"
+                  rows={3}
+                  onChange={(e) => field.onChange(e.target.value)}
+                />
               </FormControl>
             </FormItem>
           )}

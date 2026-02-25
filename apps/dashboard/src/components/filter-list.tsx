@@ -1,9 +1,8 @@
-import { formatAccountName } from "@/utils/format";
 import { Button } from "@midday/ui/button";
 import { Icons } from "@midday/ui/icons";
-import { Skeleton } from "@midday/ui/skeleton";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { formatDateRange } from "little-date";
+import { formatAccountName } from "@/utils/format";
 
 type FilterKey =
   | "start"
@@ -19,14 +18,15 @@ type FilterKey =
   | "assignees"
   | "owners"
   | "status"
-  | "manual";
+  | "manual"
+  | "type";
 
 type FilterValue = {
   start: string;
   end: string;
   amount_range: string;
   attachments: string;
-  recurring: string[];
+  recurring: string[] | boolean;
   statuses: string[];
   categories: string[];
   tags: string[];
@@ -36,6 +36,7 @@ type FilterValue = {
   owners: string[];
   status: string;
   manual: string;
+  type: "income" | "expense";
 };
 
 interface FilterValueProps {
@@ -45,7 +46,6 @@ interface FilterValueProps {
 
 interface Props {
   filters: Partial<FilterValue>;
-  loading: boolean;
   onRemove: (filters: { [key: string]: null }) => void;
   categories?: { id: string; name: string; slug: string | null }[];
   accounts?: { id: string; name: string; currency: string }[];
@@ -61,7 +61,6 @@ interface Props {
 
 export function FilterList({
   filters,
-  loading,
   onRemove,
   categories,
   accounts,
@@ -79,12 +78,12 @@ export function FilterList({
       case "start": {
         const startValue = value as FilterValue["start"];
         if (startValue && filters.end) {
-          return formatDateRange(new Date(startValue), new Date(filters.end), {
+          return formatDateRange(parseISO(startValue), parseISO(filters.end), {
             includeTime: false,
           });
         }
 
-        return startValue && format(new Date(startValue), "MMM d, yyyy");
+        return startValue && format(parseISO(startValue), "MMM d, yyyy");
       }
 
       case "amount_range": {
@@ -106,6 +105,11 @@ export function FilterList({
 
       case "recurring": {
         const recurringValue = value as FilterValue["recurring"];
+        // Handle boolean for invoice filters
+        if (typeof recurringValue === "boolean") {
+          return recurringValue ? "Recurring" : "One-time";
+        }
+        // Handle string array for transaction filters
         return recurringValue
           ?.map(
             (slug) =>
@@ -192,6 +196,13 @@ export function FilterList({
         return manualFilters?.find((filter) => filter.id === manualValue)?.name;
       }
 
+      case "type": {
+        const typeValue = value as FilterValue["type"];
+        if (typeValue === "income") return "In";
+        if (typeValue === "expense") return "Out";
+        return null;
+      }
+
       default:
         return null;
     }
@@ -208,39 +219,27 @@ export function FilterList({
 
   return (
     <ul className="flex space-x-2">
-      {loading && (
-        <div className="flex space-x-2">
-          <li>
-            <Skeleton className="h-8 w-[100px]" />
-          </li>
-          <li key="2">
-            <Skeleton className="h-8 w-[100px]" />
-          </li>
-        </div>
-      )}
-
-      {!loading &&
-        Object.entries(filters)
-          .filter(([key, value]) => value !== null && key !== "end")
-          .map(([key, value]) => {
-            const filterKey = key as FilterKey;
-            return (
-              <li key={key}>
-                <Button
-                  className="h-9 px-2 bg-secondary hover:bg-secondary font-normal text-[#878787] flex space-x-1 items-center group rounded-none"
-                  onClick={() => handleOnRemove(filterKey)}
-                >
-                  <Icons.Clear className="scale-0 group-hover:scale-100 transition-all w-0 group-hover:w-4" />
-                  <span>
-                    {renderFilter({
-                      key: filterKey,
-                      value: value as FilterValue[FilterKey],
-                    })}
-                  </span>
-                </Button>
-              </li>
-            );
-          })}
+      {Object.entries(filters)
+        .filter(([key, value]) => value !== null && key !== "end")
+        .map(([key, value]) => {
+          const filterKey = key as FilterKey;
+          return (
+            <li key={key}>
+              <Button
+                className="h-9 px-2 bg-secondary hover:bg-secondary font-normal text-[#878787] flex space-x-1 items-center group rounded-none"
+                onClick={() => handleOnRemove(filterKey)}
+              >
+                <Icons.Clear className="scale-0 group-hover:scale-100 transition-all w-0 group-hover:w-4" />
+                <span>
+                  {renderFilter({
+                    key: filterKey,
+                    value: value as FilterValue[FilterKey],
+                  })}
+                </span>
+              </Button>
+            </li>
+          );
+        })}
     </ul>
   );
 }

@@ -1,12 +1,11 @@
-import { InvoiceViewWrapper } from "@/components/invoice-view-wrapper";
-import { getQueryClient, trpc } from "@/trpc/server";
 import { decrypt } from "@midday/encryption";
 import { HtmlTemplate } from "@midday/invoice/templates/html";
 import { createClient } from "@midday/supabase/server";
-import { waitUntil } from "@vercel/functions";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import type { SearchParams } from "nuqs";
+import { InvoiceViewWrapper } from "@/components/invoice-view-wrapper";
+import { getQueryClient, trpc } from "@/trpc/server";
 
 export async function generateMetadata(props: {
   params: Promise<{ token: string }>;
@@ -51,7 +50,7 @@ export async function generateMetadata(props: {
         follow: false,
       },
     };
-  } catch (error) {
+  } catch (_error) {
     return {
       title: "Invoice Not Found",
       robots: {
@@ -107,9 +106,10 @@ export default async function Page(props: Props) {
 
       if (decryptedEmail === invoice?.customer?.email) {
         // Only update the invoice viewed_at if the user is a viewer
-        waitUntil(updateInvoiceViewedAt(invoice.id!));
+        // Fire and forget - don't block the page render
+        updateInvoiceViewedAt(invoice.id!).catch(() => {});
       }
-    } catch (error) {
+    } catch (_error) {
       // Silently fail if decryption fails - viewer might be invalid or malformed
       // This is expected when accessing the invoice without a valid viewer parameter
     }
@@ -123,31 +123,33 @@ export default async function Page(props: Props) {
   const width = invoice.template.size === "letter" ? 750 : 595;
   const height = invoice.template.size === "letter" ? 1056 : 842;
 
+  // Payment is only enabled if: template has it enabled AND team has Stripe connected
+  const paymentEnabled =
+    invoice.template.paymentEnabled && invoice.team?.stripeConnected === true;
+
   return (
-    <div className="flex flex-col justify-center items-center min-h-screen dotted-bg p-4 sm:p-6 md:p-0">
-      <div
-        className="flex flex-col w-full max-w-full py-6"
-        style={{ maxWidth: width }}
+    <>
+      <InvoiceViewWrapper
+        token={invoice.token}
+        invoiceNumber={invoice.invoiceNumber || "invoice"}
+        paymentEnabled={paymentEnabled}
+        amount={invoice.amount ?? undefined}
+        currency={invoice.currency ?? undefined}
+        initialStatus={invoice.status}
+        customerName={
+          invoice.customerName || (invoice.customer?.name as string)
+        }
+        customerWebsite={invoice.customer?.website}
+        customerPortalEnabled={invoice.customer?.portalEnabled ?? false}
+        customerPortalId={invoice.customer?.portalId ?? undefined}
+        invoiceWidth={width}
       >
-        <InvoiceViewWrapper
-          token={invoice.token}
-          invoiceNumber={invoice.invoiceNumber || "invoice"}
-          paymentEnabled={invoice.template.paymentEnabled}
-          amount={invoice.amount ?? undefined}
-          currency={invoice.currency ?? undefined}
-          initialStatus={invoice.status}
-          customerName={
-            invoice.customerName || (invoice.customer?.name as string)
-          }
-          customerWebsite={invoice.customer?.website}
-        >
-          <div className="pb-24 md:pb-0">
-            <div className="shadow-[0_24px_48px_-12px_rgba(0,0,0,0.3)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.6)]">
-              <HtmlTemplate data={invoice} width={width} height={height} />
-            </div>
+        <div className="pb-24 md:pb-0">
+          <div className="shadow-[0_24px_48px_-12px_rgba(0,0,0,0.3)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.6)]">
+            <HtmlTemplate data={invoice} width={width} height={height} />
           </div>
-        </InvoiceViewWrapper>
-      </div>
+        </div>
+      </InvoiceViewWrapper>
 
       <div className="fixed bottom-4 right-4 hidden md:block">
         <a
@@ -159,6 +161,6 @@ export default async function Page(props: Props) {
           Powered by <span className="text-primary">midday</span>
         </a>
       </div>
-    </div>
+    </>
   );
 }

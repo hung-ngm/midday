@@ -1,9 +1,5 @@
 "use client";
 
-import { useInboxParams } from "@/hooks/use-inbox-params";
-import { useLocalStorage } from "@/hooks/use-local-storage";
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
 import { Button } from "@midday/ui/button";
 import { cn } from "@midday/ui/cn";
 import { Combobox } from "@midday/ui/combobox";
@@ -18,6 +14,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { useDebounceValue } from "usehooks-ts";
+import { useInboxParams } from "@/hooks/use-inbox-params";
+import { useLocalStorage } from "@/hooks/use-local-storage";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
 import { TransactionMatchItem } from "./transaction-match-item";
 import { TransactionUnmatchItem } from "./transaction-unmatch-item";
 
@@ -220,30 +220,32 @@ export function MatchTransaction() {
         onSelect={handleSelect}
       />
 
-      <TooltipProvider delayDuration={100}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleIncludeAlreadyMatched}
-              className={cn(
-                "absolute right-3 top-1/2 transform -translate-y-1/2 z-10 h-6 w-6",
-                includeAlreadyMatched
-                  ? "text-foreground hover:text-foreground"
-                  : "text-muted-foreground hover:text-muted-foreground",
-              )}
-            >
-              <Icons.Filter className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent className="text-xs px-3 py-1.5">
-            {includeAlreadyMatched
-              ? "Hide already matched transactions"
-              : "Show already matched transactions"}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      {!isSearching && (
+        <TooltipProvider delayDuration={100}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleIncludeAlreadyMatched}
+                className={cn(
+                  "absolute right-3 top-1/2 transform -translate-y-1/2 z-10 h-6 w-6",
+                  includeAlreadyMatched
+                    ? "text-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-muted-foreground",
+                )}
+              >
+                <Icons.Filter className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="text-xs px-3 py-1.5">
+              {includeAlreadyMatched
+                ? "Hide already matched transactions"
+                : "Show already matched transactions"}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
     </motion.div>
   );
 }

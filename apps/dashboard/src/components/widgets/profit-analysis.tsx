@@ -1,26 +1,26 @@
 "use client";
 
-import { useChatInterface } from "@/hooks/use-chat-interface";
-import { useMetricsFilter } from "@/hooks/use-metrics-filter";
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
-import { formatAmount } from "@/utils/format";
-import { getPeriodLabel } from "@/utils/metrics-date-utils";
 import { useChatActions, useChatId } from "@ai-sdk-tools/store";
 import { Icons } from "@midday/ui/icons";
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import {
   Bar,
-  Cell,
   ComposedChart,
   ReferenceLine,
   ResponsiveContainer,
   XAxis,
   YAxis,
 } from "recharts";
+import { useChatInterface } from "@/hooks/use-chat-interface";
+import { useMetricsFilter } from "@/hooks/use-metrics-filter";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
+import { formatAmount } from "@/utils/format";
+import { getPeriodLabel } from "@/utils/metrics-date-utils";
 import { BaseWidget } from "./base";
 import { WIDGET_POLLING_CONFIG } from "./widget-config";
+import { WidgetSkeleton } from "./widget-skeleton";
 
 export function ProfitAnalysisWidget() {
   const trpc = useTRPC();
@@ -30,7 +30,7 @@ export function ProfitAnalysisWidget() {
   const { setChatId } = useChatInterface();
   const { from, to, period, revenueType, currency } = useMetricsFilter();
 
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     ...trpc.reports.profit.queryOptions({
       from,
       to,
@@ -39,6 +39,16 @@ export function ProfitAnalysisWidget() {
     }),
     ...WIDGET_POLLING_CONFIG,
   });
+
+  if (isLoading) {
+    return (
+      <WidgetSkeleton
+        title="Profit & Loss"
+        icon={<Icons.PieChart className="size-4" />}
+        descriptionLines={2}
+      />
+    );
+  }
 
   const handleToolCall = (params: {
     toolName: string;
@@ -88,14 +98,10 @@ export function ProfitAnalysisWidget() {
     });
   };
 
-  // Prepare data for chart
-  const chartData = (data?.result || []).slice(-12).map((item, index) => ({
-    month: format(new Date(item.date), "MMM"),
+  // Prepare data for chart - use consistent foreground color since this only shows current period
+  const chartData = (data?.result || []).slice(-12).map((item) => ({
+    month: format(parseISO(item.date), "MMM"),
     profit: item.current.value,
-    fill:
-      index % 2 === 0
-        ? "hsl(var(--muted-foreground))"
-        : "hsl(var(--foreground))",
   }));
 
   return (
@@ -116,8 +122,8 @@ export function ProfitAnalysisWidget() {
       onClick={handleViewAnalysis}
     >
       {chartData.length > 0 ? (
-        <div className="h-16 w-full">
-          <ResponsiveContainer width="100%" height="100%">
+        <div className="w-full">
+          <ResponsiveContainer width="100%" height={64}>
             <ComposedChart
               data={chartData}
               margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
@@ -130,11 +136,12 @@ export function ProfitAnalysisWidget() {
                 strokeDasharray="3 3"
                 strokeWidth={1}
               />
-              <Bar dataKey="profit" maxBarSize={8} isAnimationActive={false}>
-                {chartData.map((entry) => (
-                  <Cell key={entry.month} fill={entry.fill} />
-                ))}
-              </Bar>
+              <Bar
+                dataKey="profit"
+                maxBarSize={8}
+                isAnimationActive={false}
+                fill="hsl(var(--foreground))"
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

@@ -1,17 +1,16 @@
 "use client";
 
+import { cn } from "@midday/ui/cn";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { AnimatedNumber } from "@/components/animated-number";
+import { formatChartMonth } from "@/components/charts/chart-utils";
 import { MonthlyRevenueChart } from "@/components/charts/monthly-revenue-chart";
 import { useLongPress } from "@/hooks/use-long-press";
 import { useMetricsCustomize } from "@/hooks/use-metrics-customize";
-import { useOverviewTab } from "@/hooks/use-overview-tab";
 import { useChatStore } from "@/store/chat";
 import { useTRPC } from "@/trpc/client";
 import { generateChartSelectionMessage } from "@/utils/chart-selection-message";
-import { cn } from "@midday/ui/cn";
-import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { useMemo, useState } from "react";
 import { ShareMetricButton } from "../components/share-metric-button";
 
 interface MonthlyRevenueCardProps {
@@ -32,7 +31,6 @@ export function MonthlyRevenueCard({
   revenueType = "net",
 }: MonthlyRevenueCardProps) {
   const trpc = useTRPC();
-  const { isMetricsTab } = useOverviewTab();
   const { isCustomizing, setIsCustomizing } = useMetricsCustomize();
   const setInput = useChatStore((state) => state.setInput);
   const [isSelecting, setIsSelecting] = useState(false);
@@ -43,15 +41,14 @@ export function MonthlyRevenueCard({
     disabled: isCustomizing || isSelecting,
   });
 
-  const { data: revenueData } = useQuery({
-    ...trpc.reports.revenue.queryOptions({
+  const { data: revenueData } = useQuery(
+    trpc.reports.revenue.queryOptions({
       from,
       to,
       currency: currency,
       revenueType,
     }),
-    enabled: isMetricsTab,
-  });
+  );
 
   // Transform revenue data
   const monthlyRevenueChartData = useMemo(() => {
@@ -60,8 +57,10 @@ export function MonthlyRevenueCard({
     const values = revenueData.result.map((item) => item.current.value);
     const average = values.reduce((sum, val) => sum + val, 0) / values.length;
 
+    const totalMonths = revenueData.result.length;
+
     return revenueData.result.map((item) => ({
-      month: format(new Date(item.date), "MMM"),
+      month: formatChartMonth(item.date, totalMonths),
       amount: item.current.value,
       lastYearAmount: item.previous.value,
       average,
@@ -106,7 +105,7 @@ export function MonthlyRevenueCard({
         <div className="flex items-center gap-4 mt-2">
           <div className="flex gap-2 items-center">
             <div className="w-2 h-2 bg-foreground" />
-            <span className="text-xs text-muted-foreground">This Year</span>
+            <span className="text-xs text-muted-foreground">Current</span>
           </div>
           <div className="flex gap-2 items-center">
             <div
@@ -115,7 +114,7 @@ export function MonthlyRevenueCard({
                 backgroundColor: "var(--chart-bar-fill-secondary)",
               }}
             />
-            <span className="text-xs text-muted-foreground">Last Year</span>
+            <span className="text-xs text-muted-foreground">Previous</span>
           </div>
           <div className="flex gap-2 items-center">
             <div

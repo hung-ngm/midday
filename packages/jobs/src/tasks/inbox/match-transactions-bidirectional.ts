@@ -2,12 +2,12 @@ import { getDb } from "@jobs/init";
 import { triggerMatchingNotification } from "@jobs/utils/inbox-matching-notifications";
 import {
   calculateInboxSuggestions,
+  findInboxMatches,
   getPendingInboxForMatching,
   getTransactionById,
   hasSuggestion,
   matchTransaction,
 } from "@midday/db/queries";
-import { findInboxMatches } from "@midday/db/queries";
 import { logger, schemaTask } from "@trigger.dev/sdk";
 import { z } from "zod";
 
@@ -28,7 +28,7 @@ export const matchTransactionsBidirectional = schemaTask({
     });
 
     // PHASE 1: Forward matching - Find inbox items for new transactions
-    const forwardMatches = new Map<string, string>(); // transactionId -> inboxId
+    const forwardMatches = new Map<string, string>();
     let forwardMatchCount = 0;
     let forwardSuggestionCount = 0;
 
@@ -42,11 +42,9 @@ export const matchTransactionsBidirectional = schemaTask({
         if (inboxMatch) {
           forwardMatches.set(transactionId, inboxMatch.inboxId);
 
-          // Determine if this should be auto-matched or suggested
           const shouldAutoMatch = inboxMatch.matchType === "auto_matched";
 
           if (shouldAutoMatch) {
-            // Auto-match the transaction to inbox
             await matchTransaction(db, {
               id: inboxMatch.inboxId,
               teamId,
@@ -62,8 +60,6 @@ export const matchTransactionsBidirectional = schemaTask({
               confidence: inboxMatch.confidenceScore,
             });
 
-            // Send notification for auto-match
-            // Get transaction data to create complete MatchResult
             const transaction = await getTransactionById(db, {
               id: transactionId,
               teamId,
@@ -94,7 +90,6 @@ export const matchTransactionsBidirectional = schemaTask({
               });
             }
           } else {
-            // Create suggestion for manual review
             forwardSuggestionCount++;
 
             logger.info("Created forward match suggestion", {
@@ -115,13 +110,11 @@ export const matchTransactionsBidirectional = schemaTask({
     }
 
     // PHASE 2: Reverse matching - Find transactions for pending inbox items
-    // Only process inbox items that weren't already matched in Phase 1
     const pendingInboxItems = await getPendingInboxForMatching(db, {
       teamId,
-      limit: 50, // Reduced limit since we're processing more efficiently
+      limit: 50,
     });
 
-    // Filter out inbox items that were already matched in Phase 1
     const matchedInboxIds = new Set(forwardMatches.values());
     const unmatchedInboxItems = pendingInboxItems.filter(
       (item) => !matchedInboxIds.has(item.id),
@@ -138,7 +131,6 @@ export const matchTransactionsBidirectional = schemaTask({
     let reverseSuggestionCount = 0;
     let noMatchCount = 0;
 
-    // Process inbox items in smaller batches for better performance
     const BATCH_SIZE = 10;
     for (let i = 0; i < unmatchedInboxItems.length; i += BATCH_SIZE) {
       const batch = unmatchedInboxItems.slice(i, i + BATCH_SIZE);
@@ -151,15 +143,12 @@ export const matchTransactionsBidirectional = schemaTask({
               inboxId: inboxItem.id,
             });
 
-            // Send notifications based on matching result
             if (hasSuggestion(result)) {
-              // Type guard narrows the type here
-              const resultWithSuggestion = result;
               await triggerMatchingNotification({
                 db,
                 teamId,
                 inboxId: inboxItem.id,
-                result: resultWithSuggestion,
+                result,
               });
             }
 
@@ -199,7 +188,6 @@ export const matchTransactionsBidirectional = schemaTask({
       );
     }
 
-    // Final summary
     const totalProcessed =
       newTransactionIds.length + unmatchedInboxItems.length;
     const totalMatched = forwardMatchCount + reverseMatchCount;

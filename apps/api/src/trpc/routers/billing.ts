@@ -1,9 +1,63 @@
-import { getBillingOrdersSchema } from "@api/schemas/billing";
+import {
+  createCheckoutSchema,
+  getBillingOrdersSchema,
+} from "@api/schemas/billing";
 import { createTRPCRouter, protectedProcedure } from "@api/trpc/init";
 import { api } from "@api/utils/polar";
+import { getTeamById } from "@midday/db/queries";
+import { createLoggerWithContext } from "@midday/logger";
+import { getDiscount, getPlans } from "@midday/plans";
 import { z } from "zod";
 
+const logger = createLoggerWithContext("trpc:billing");
+
 export const billingRouter = createTRPCRouter({
+  createCheckout: protectedProcedure
+    .input(createCheckoutSchema)
+    .mutation(async ({ input, ctx: { db, session, teamId, geo } }) => {
+      const { plan, planType, embedOrigin } = input;
+
+      // Get team data
+      const team = await getTeamById(db, teamId!);
+
+      if (!team) {
+        throw new Error("Team not found");
+      }
+
+      // Get plan configuration
+      const plans = getPlans();
+      const selectedPlan = plans[plan as keyof typeof plans];
+
+      if (!selectedPlan) {
+        throw new Error("Invalid plan");
+      }
+
+      // Get discount if applicable
+      const discountId = getDiscount(planType);
+
+      // Get country code from team or geo context
+      const countryCode = team.countryCode ?? geo?.country;
+
+      // Create Polar checkout
+      const checkout = await api.checkouts.create({
+        products: [selectedPlan.id],
+        externalCustomerId: team.id,
+        customerEmail: session.user.email ?? undefined,
+        customerName: team.name ?? undefined,
+        customerBillingAddress: countryCode
+          ? { country: countryCode as never }
+          : undefined,
+        discountId: discountId?.id,
+        metadata: {
+          teamId: team.id,
+          companyName: team.name ?? "",
+        },
+        embedOrigin,
+      });
+
+      return { url: checkout.url };
+    }),
+
   orders: protectedProcedure
     .input(getBillingOrdersSchema)
     .query(async ({ input, ctx: { teamId } }) => {
@@ -96,14 +150,16 @@ export const billingRouter = createTRPCRouter({
             status: "ready",
             downloadUrl: invoice.url,
           };
-        } catch (invoiceError) {
+        } catch (_invoiceError) {
           // Invoice might still be generating
           return {
             status: "generating",
           };
         }
       } catch (error) {
-        console.error("Failed to get invoice download URL:", error);
+        logger.error("Failed to get invoice download URL", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw new Error(
           error instanceof Error ? error.message : "Failed to download invoice",
         );
@@ -138,13 +194,15 @@ export const billingRouter = createTRPCRouter({
             status: "ready",
             downloadUrl: invoice.url,
           };
-        } catch (invoiceError) {
+        } catch (_invoiceError) {
           return {
             status: "generating",
           };
         }
       } catch (error) {
-        console.error("Failed to check invoice status:", error);
+        logger.error("Failed to check invoice status", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw new Error(
           error instanceof Error
             ? error.message
@@ -152,4 +210,12 @@ export const billingRouter = createTRPCRouter({
         );
       }
     }),
+
+  getPortalUrl: protectedProcedure.mutation(async ({ ctx: { teamId } }) => {
+    const result = await api.customerSessions.create({
+      externalCustomerId: teamId!,
+    });
+
+    return { url: result.customerPortalUrl };
+  }),
 });

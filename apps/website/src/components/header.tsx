@@ -1,442 +1,1156 @@
 "use client";
 
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@midday/ui/accordion";
 import { cn } from "@midday/ui/cn";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@midday/ui/context-menu";
 import { Icons } from "@midday/ui/icons";
-import { motion } from "framer-motion";
+import { motion } from "motion/react";
+import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import menuAssistantLight from "public/menu-assistant-light.jpg";
-import menuAssistantDark from "public/menu-assistant.jpg";
-import menuEngineLight from "public/menu-engine-light.png";
-import menuEngineDark from "public/menu-engine.png";
-import { useEffect, useState } from "react";
-import { FaDiscord, FaGithub } from "react-icons/fa";
-import {
-  MdOutlineDashboardCustomize,
-  MdOutlineDescription,
-  MdOutlineIntegrationInstructions,
-  MdOutlineMemory,
-} from "react-icons/md";
-import { DynamicImage } from "./dynamic-image";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { HeaderIntegrationsPreview } from "./header-integrations-preview";
+import type { Testimonial } from "./sections/testimonials-section";
+import { defaultTestimonials } from "./sections/testimonials-section";
 
-const listVariant = {
-  show: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.03,
-    },
+// All testimonials for header rotation (includes default + new ones)
+const headerTestimonials: Testimonial[] = [
+  ...defaultTestimonials,
+  {
+    name: "Vitalie Rosescu",
+    title: "",
+    company: "Awwwocado",
+    country: "Netherlands",
+    image: "/stories/vitalie.jpg",
+    content:
+      "All in one platform for freelancers looking to create clear insights on income and expenses.",
+    fullContent:
+      "Company\nAwwwocado is a Webflow development business.\n\nChallenge\nWhat I lacked in other software is the overview of which invoices were paid and which were pending, and seeing my overall income. Existing tools didn't give a clear picture of finances.\n\nImpact\nHaving a clear overview of income, invoices, and expenses in one place made managing the business much easier.\n\nFavorite features\nInvoices, because it's a big time saver.\nA clean share link for customers is very nice.\nExpenses being taken from my inbox and being able to upload expenses is a huge one.\nThe invoice template is clean out of the box and very customizable.",
   },
-  hidden: {
-    opacity: 0,
+  {
+    name: "Nick Speer",
+    title: "",
+    company: "Speer Technologies",
+    country: "United States",
+    image: "/stories/speer.jpeg",
+    content:
+      "Midday is bookkeeping software without the fluff. It's a ledger with modern tooling and integrations.",
+    fullContent:
+      "Company\nSpeer Technologies is an AI consulting firm in the US. We accelerate our clients' AI initiatives from problem discovery to production across industries including Finance, Healthcare, and Defense.\n\nChallenge\nI was spending too much time on weekends cleaning up my books, juggling invoices, and clicking around clunky software. It felt like another job, and the other solutions didn't work the way I wanted.\n\nImpact\nAfter switching from QuickBooks to Midday, it felt like I was in control of my books. I could see every transaction and expense as it came in and manage it without feeling overwhelmed.\n\nFavorite features\nAuto-categorization is far better than other programs, which saves time from manually organizing books. From there, I can export data and get insights into exact spending categories.",
   },
-};
+  {
+    name: "Ivo Dukov",
+    title: "",
+    company: "Smarch",
+    country: "Bulgaria",
+    content:
+      "Everything lives in one place now — customers, invoices, documents, and financial analytics.",
+    fullContent:
+      "Company\nSmarch is a software development agency specializing in e-commerce, web applications, and custom backend systems.\n\nChallenge\nBefore Midday, I was manually creating PDF invoices, piecing together bank reports to understand how the company was doing, and collecting financial documents every time accounting needed something. It was scattered and tedious.\n\nImpact\nEverything lives in one place now. I set up invoice templates once, have all clients organized, get real analytics on company performance, and keep documents in a proper vault. What used to take hours of admin work is now streamlined and mostly automatic.\n\nFavorite features\nInvoice templates. They eliminate repetitive work when billing multiple clients.",
+  },
+  {
+    name: "Ciarán Harris",
+    title: "",
+    company: "CogniStream",
+    country: "Ireland",
+    image: "/stories/ciaran.jpeg",
+    content:
+      "Financial admin stopped being a source of friction. Midday actually works the way you'd expect modern software to work.",
+    fullContent:
+      "Company\nCogniStream is an AI-moderated qualitative research platform. We have natural voice conversations with customers, analyse not just what they say but how they feel when they say it, and help businesses make confident decisions faster. I'm Ciarán Harris, CEO and Co-Founder, a two-time founder with over 25 years of research experience for global giants.\n\nChallenge\nI tried using Xero. It couldn't connect to my bank account reliably, the interface felt like it hadn't been updated in a decade, and just getting up and running was painful. It never worked out of the box. The real kicker? My accountant also used Xero, but he preferred I send him everything as a CSV anyway. That completely negated the point. As a founder, you need financial admin to just work so you can focus on building the business. It wasn't working.\n\nImpact\nFinancial admin stopped being a source of friction. Midday actually works the way you'd expect modern software to work. I check in every few days to keep on top of things, and every few weeks I'll do a more involved session to get through receipt scanning and matching ahead of VAT returns. It removed the single biggest pain point from my week-to-week financial admin, and everything else it does is a genuinely useful bonus on top of that.\n\nFavorite features\nReceipt scanning and matching, without question. That's the feature that removes the most friction from running the business day to day. Before, receipts were scattered and matching them to transactions was tedious. Now it's handled. That one feature alone justified the switch. The AI assistant is a nice bonus too, being able to ask a natural language question about your finances and get detailed results is genuinely useful.",
+  },
+];
 
-const itemVariant = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1 },
-};
+interface HeaderProps {
+  transparent?: boolean;
+  hideMenuItems?: boolean;
+}
 
-export function Header() {
-  const pathname = usePathname();
-  const [isOpen, setOpen] = useState(false);
-  const [showBlur, setShowBlur] = useState(false);
-  const [hidden, setHidden] = useState(false);
-  const lastPath = `/${pathname.split("/").pop()}`;
+// Feature pages to prefetch on hover
+const FEATURE_ROUTES = [
+  "/assistant",
+  "/insights",
+  "/transactions",
+  "/inbox",
+  "/time-tracking",
+  "/invoicing",
+  "/customers",
+  "/file-storage",
+  "/pre-accounting",
+];
 
-  useEffect(() => {
-    const setPixelRatio = () => {
-      const pixelRatio = window.devicePixelRatio || 1;
-      document.documentElement.style.setProperty(
-        "--pixel-ratio",
-        `${1 / pixelRatio}`,
-      );
-    };
+// App pages to prefetch on hover
+const APP_ROUTES = ["/integrations", "/download", "/docs", "/mcp"];
 
-    setPixelRatio();
-    window.addEventListener("resize", setPixelRatio);
+export function Header({
+  transparent = false,
+  hideMenuItems = false,
+}: HeaderProps) {
+  const router = useRouter();
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isFeaturesOpen, setIsFeaturesOpen] = useState(false);
+  const [isAppsOpen, setIsAppsOpen] = useState(false);
+  const [isMobileFeaturesOpen, setIsMobileFeaturesOpen] = useState(false);
+  const [isMobileAppsOpen, setIsMobileAppsOpen] = useState(false);
+  const [visibleIntegrations, setVisibleIntegrations] = useState<
+    Array<{ id: number; key: string }>
+  >([]);
+  const [featuresDropdownHeight, setFeaturesDropdownHeight] = useState<
+    number | null
+  >(null);
+  const featuresTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const appsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const integrationKeyCounterRef = useRef(0);
+  const featuresListRef = useRef<HTMLDivElement>(null);
+  const preAccountingRef = useRef<HTMLAnchorElement>(null);
+  const appsListRef = useRef<HTMLDivElement>(null);
+  const macAppRef = useRef<HTMLAnchorElement>(null);
+  const integrationsAppRef = useRef<HTMLAnchorElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const featuresPrefetched = useRef(false);
+  const appsPrefetched = useRef(false);
+  const [currentTestimonialIndex, setCurrentTestimonialIndex] = useState(0);
 
-    return () => window.removeEventListener("resize", setPixelRatio);
-  }, []);
+  // Prefetch feature pages on hover (only once)
+  const prefetchFeatures = useCallback(() => {
+    if (featuresPrefetched.current) return;
+    featuresPrefetched.current = true;
+    for (const route of FEATURE_ROUTES) {
+      router.prefetch(route);
+    }
+  }, [router]);
 
-  const handleToggleMenu = () => {
-    setOpen((prev) => {
-      document.body.style.overflow = prev ? "" : "hidden";
-      return !prev;
-    });
-  };
+  // Prefetch app pages on hover (only once)
+  const prefetchApps = useCallback(() => {
+    if (appsPrefetched.current) return;
+    appsPrefetched.current = true;
+    for (const route of APP_ROUTES) {
+      router.prefetch(route);
+    }
+  }, [router]);
 
-  const handleOnClick = () => {
-    setShowBlur(false);
-    setHidden(true);
-
-    setTimeout(() => {
-      setHidden(false);
-    }, 100);
-  };
-
-  const links = [
-    {
-      title: "Features",
-      cover: (
-        <Link href="/#assistant" onClick={handleOnClick}>
-          <DynamicImage
-            alt="Assistant"
-            darkSrc={menuAssistantDark}
-            lightSrc={menuAssistantLight}
-          />
-        </Link>
-      ),
-      children: [
-        {
-          path: "/overview",
-          title: "Overview",
-          icon: <Icons.Overview size={20} />,
-        },
-        {
-          path: "/inbox",
-          title: "Inbox",
-          icon: <Icons.Inbox2 size={20} />,
-        },
-        {
-          path: "/vault",
-          title: "Vault",
-          icon: <Icons.Files size={20} />,
-        },
-        {
-          path: "/tracker",
-          title: "Tracker",
-          icon: <Icons.Tracker size={20} />,
-        },
-        {
-          path: "/invoice",
-          title: "Invoice",
-          icon: <Icons.Invoice size={20} />,
-        },
-      ],
-    },
-    {
-      title: "Pricing",
-      path: "/pricing",
-    },
-    {
-      title: "Updates",
-      path: "/updates",
-    },
-    {
-      title: "Story",
-      path: "/story",
-    },
-    {
-      title: "Download",
-      path: "/download",
-    },
-    {
-      title: "Developers",
-      cover: (
-        <Link href="/engine" onClick={handleOnClick}>
-          <DynamicImage
-            alt="Engine"
-            darkSrc={menuEngineDark}
-            lightSrc={menuEngineLight}
-          />
-        </Link>
-      ),
-      children: [
-        {
-          path: "https://git.new/midday",
-          title: "Open Source",
-          icon: <FaGithub size={19} />,
-        },
-        {
-          path: "https://docs.midday.ai",
-          title: "Documentation",
-          icon: <MdOutlineDescription size={20} />,
-        },
-        {
-          path: "/engine",
-          title: "Engine",
-          icon: <MdOutlineMemory size={20} />,
-        },
-        {
-          title: "Apps & Integrations",
-          path: "https://docs.midday.ai/integrations",
-          icon: <MdOutlineIntegrationInstructions size={20} />,
-        },
-        {
-          path: "/components",
-          title: "Components",
-          icon: <MdOutlineDashboardCustomize size={20} />,
-        },
-      ],
-    },
+  // All non-ERP integrations
+  const allIntegrations = [
+    { src: "/images/gmail.svg", alt: "Gmail" },
+    { src: "/images/slack.svg", alt: "Slack" },
+    { src: "/images/stripe.svg", alt: "Stripe" },
+    { src: "/images/gdrive.svg", alt: "Google Drive" },
+    { src: "/images/outlook.svg", alt: "Outlook" },
+    { src: "/images/whatsapp.svg", alt: "WhatsApp" },
+    { src: "/images/dropbox.svg", alt: "Dropbox" },
   ];
 
-  if (pathname.includes("pitch")) {
-    return null;
-  }
+  // Initialize with 4 random integrations
+  useEffect(() => {
+    if (isAppsOpen && visibleIntegrations.length === 0) {
+      const shuffled = [...allIntegrations.keys()].sort(
+        () => Math.random() - 0.5,
+      );
+      setVisibleIntegrations(
+        shuffled.slice(0, 4).map((idx) => ({
+          id: idx,
+          key: `init-${integrationKeyCounterRef.current++}`,
+        })),
+      );
+    }
+  }, [isAppsOpen]);
+
+  // Randomly fade in/out individual logos
+  useEffect(() => {
+    if (!isAppsOpen || visibleIntegrations.length === 0) return;
+
+    const interval = setInterval(
+      () => {
+        setVisibleIntegrations((current) => {
+          // Randomly decide to replace one logo (70% chance)
+          if (Math.random() < 0.7 && current.length === 4) {
+            const indexToReplace = Math.floor(Math.random() * 4);
+            const availableIndices = allIntegrations
+              .map((_, i) => i)
+              .filter((i) => !current.some((item) => item.id === i));
+
+            if (availableIndices.length > 0) {
+              const newIndex =
+                availableIndices[
+                  Math.floor(Math.random() * availableIndices.length)
+                ];
+              const newVisible = [...current];
+              newVisible[indexToReplace] = {
+                id: newIndex ?? 0,
+                key: `change-${integrationKeyCounterRef.current++}`,
+              };
+              return newVisible;
+            }
+          }
+          return current;
+        });
+      },
+      1500 + Math.random() * 1000,
+    ); // Random interval between 1.5-2.5 seconds
+
+    return () => clearInterval(interval);
+  }, [isAppsOpen, visibleIntegrations.length]);
+
+  // Match Pre-accounting container height to features list and store height for apps dropdown
+  useEffect(() => {
+    if (isFeaturesOpen && featuresListRef.current) {
+      // Get the full dropdown height including padding
+      const featuresDropdown = featuresListRef.current.closest(
+        "[data-features-dropdown]",
+      ) as HTMLElement;
+      const featuresHeight = featuresDropdown
+        ? featuresDropdown.offsetHeight
+        : featuresListRef.current.offsetHeight;
+      setFeaturesDropdownHeight(featuresHeight);
+    }
+  }, [isFeaturesOpen]);
+
+  // Apps dropdown height matches Features dropdown (image containers are fixed at 442x277)
+
+  useEffect(() => {
+    return () => {
+      if (featuresTimeoutRef.current) {
+        clearTimeout(featuresTimeoutRef.current);
+      }
+      if (appsTimeoutRef.current) {
+        clearTimeout(appsTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
-    <header className="sticky mt-4 top-4 z-50 px-2 md:px-4 md:flex justify-center">
-      <nav className="border border-border px-4 flex items-center backdrop-filter backdrop-blur-xl bg-[#FFFFFF] dark:bg-[#121212] bg-opacity-70 h-[50px] z-20 relative">
-        <ContextMenu>
-          <ContextMenuTrigger>
-            <Link href="/">
-              <span className="sr-only">Midday Logo</span>
-              <Icons.LogoSmall className="size-6" />
-            </Link>
-          </ContextMenuTrigger>
+    <>
+      {/* Dark Overlay */}
+      <div
+        className={`fixed left-0 right-0 bottom-0 z-40 transition-opacity duration-150 ${
+          isFeaturesOpen || isAppsOpen
+            ? "opacity-100 visible bg-black/40"
+            : "opacity-0 invisible pointer-events-none"
+        }`}
+        style={{ top: "72px" }}
+      />
 
-          <ContextMenuContent
-            className="w-[200px] dark:bg-[#121212] bg-[#fff] rounded-none"
-            alignOffset={20}
+      {/* Navigation Bar */}
+      <nav className="fixed top-0 left-0 right-0 z-50 w-full">
+        <div
+          ref={headerRef}
+          className={cn(
+            "relative py-3 xl:py-4 px-4 sm:px-4 md:px-4 lg:px-4 xl:px-6 2xl:px-8 flex items-center justify-between xl:gap-6",
+            isMenuOpen && "border-b border-border",
+            !transparent && "backdrop-blur-md bg-background-semi-transparent",
+            !transparent &&
+              (isFeaturesOpen || isAppsOpen) &&
+              "xl:bg-background",
+          )}
+        >
+          {/* Logo and Brand */}
+          <Link
+            href="/"
+            className="flex items-center gap-2 hover:opacity-80 active:opacity-80 transition-opacity duration-200 touch-manipulation"
+            onClick={() => setIsMenuOpen(false)}
+            style={{ WebkitTapHighlightColor: "transparent" }}
+            aria-label="Midday - Go to homepage"
           >
-            <div className="divide-y">
-              <ContextMenuItem
-                className="flex items-center space-x-2"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(
-                      `<svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M14.8541 2.6983C15.4799 4.5758 15.4799 6.60604 14.8541 8.48354L14.3118 10.1067L16.3236 8.32414C17.5176 7.26526 18.3366 5.84768 18.6566 4.28424L19.2267 1.49751L20.9604 1.85239L20.3903 4.63913C19.9935 6.578 18.9784 8.33639 17.4977 9.64944L16.2154 10.7862L18.8497 10.2475C20.4134 9.92753 21.8319 9.1087 22.8908 7.91456L24.7781 5.7864L26.1022 6.96044L24.2149 9.0886C22.9018 10.5693 21.1435 11.5845 19.2046 11.9812L17.5244 12.3245L20.0761 13.175C21.5903 13.6797 23.2279 13.6797 24.742 13.175L27.4403 12.2756L28 13.9546L25.3017 14.8541C23.4241 15.4799 21.394 15.4799 19.5165 14.8541L17.8921 14.3118L19.6759 16.3236C20.7347 17.5176 22.1523 18.3355 23.7158 18.6554L26.5025 19.2267L26.1476 20.9604L23.3609 20.3903C21.4219 19.9935 19.6636 18.9784 18.3506 17.4977L17.2149 16.2166L17.7537 18.8497C18.0736 20.4131 18.8915 21.8308 20.0854 22.8896L22.2136 24.7769L21.0396 26.1011L18.9114 24.2138C17.4308 22.9008 16.4155 21.1434 16.0188 19.2046L15.6755 17.5268L14.8261 20.0761C14.3214 21.5902 14.3214 23.2279 14.8261 24.742L15.7256 27.4403L14.0454 28L13.1459 25.3017C12.5201 23.4242 12.5201 21.394 13.1459 19.5165L13.687 17.8898L11.6764 19.6747C10.4822 20.7336 9.6634 22.1522 9.34342 23.7158L8.77327 26.5025L7.03956 26.1464L7.60971 23.3609C8.00648 21.422 9.02157 19.6636 10.5023 18.3506L11.7834 17.2126L9.15027 17.7525C7.58674 18.0725 6.16925 18.8914 5.11037 20.0854L3.22307 22.2136L1.89894 21.0396L3.78624 18.9114C5.09924 17.4307 6.85659 16.4156 8.79538 16.0188L10.4744 15.6744L7.92387 14.825C6.40972 14.3203 4.77213 14.3203 3.25798 14.825L0.559674 15.7244L0 14.0454L2.6983 13.1459C4.57585 12.5201 6.606 12.5201 8.48354 13.1459L10.1067 13.687L8.32414 11.6764C7.26522 10.4823 5.8478 9.66337 4.28424 9.34342L1.49751 8.77327L1.85239 7.03956L4.63913 7.60971C6.57804 8.00648 8.33636 9.0216 9.64944 10.5023L10.7839 11.7822L10.2463 9.15027C9.9264 7.58686 9.10847 6.16923 7.91456 5.11037L5.7864 3.22307L6.96044 1.89777L9.0886 3.78507C10.5694 5.09812 11.5844 6.85651 11.9812 8.79538L12.3245 10.4744L13.175 7.92387C13.6797 6.40976 13.6797 4.77209 13.175 3.25798L12.2756 0.559674L13.9546 0L14.8541 2.6983ZM14 11.2342C12.4732 11.2344 11.2344 12.4732 11.2342 14L11.2493 14.2827C11.3911 15.6767 12.5687 16.7645 14 16.7646C15.4313 16.7645 16.6089 15.6767 16.7507 14.2827L16.7646 14L16.7507 13.7173C16.6185 12.4161 15.5838 11.3817 14.2827 11.2493L14 11.2342Z" fill="white"/>
-</svg>
-                    `,
-                    );
-                  } catch {}
+            <div className="w-6 h-6">
+              <Icons.LogoSmall className="w-full h-full text-foreground" />
+            </div>
+            <span className="font-sans text-base xl:hidden text-foreground">
+              midday
+            </span>
+          </Link>
+
+          {/* Desktop Navigation Links */}
+          {!hideMenuItems && (
+            <div className="hidden xl:flex items-center gap-6">
+              {/* Features with Dropdown */}
+              <div
+                className="relative -mx-3 -my-2"
+                onMouseEnter={() => {
+                  if (featuresTimeoutRef.current) {
+                    clearTimeout(featuresTimeoutRef.current);
+                  }
+                  prefetchFeatures();
+                  // Rotate to next testimonial
+                  setCurrentTestimonialIndex(
+                    (prev) => (prev + 1) % headerTestimonials.length,
+                  );
+                  setIsFeaturesOpen(true);
+                }}
+                onMouseLeave={() => {
+                  featuresTimeoutRef.current = setTimeout(() => {
+                    setIsFeaturesOpen(false);
+                  }, 200);
                 }}
               >
-                <Icons.LogoSmall className="size-3" />
-                <span className="font-medium text-sm">Copy Logo as SVG</span>
-              </ContextMenuItem>
-              <ContextMenuItem asChild>
-                <Link href="/branding" className="flex items-center space-x-2">
-                  <Icons.Change />
-                  <span className="font-medium text-sm">Branding</span>
-                </Link>
-              </ContextMenuItem>
-              <ContextMenuItem>
-                <a
-                  href="https://ui.midday.ai"
-                  className="flex items-center space-x-2"
+                <button
+                  type="button"
+                  className="text-sm transition-colors text-muted-foreground hover:text-foreground px-3 py-2 flex items-center gap-1"
                 >
-                  <Icons.Palette />
-                  <span className="font-medium text-sm">Design System</span>
-                </a>
-              </ContextMenuItem>
-            </div>
-          </ContextMenuContent>
-        </ContextMenu>
-
-        <ul className="space-x-2 font-medium text-sm hidden md:flex mx-3">
-          {links.map(({ path, title, children, cover }) => {
-            if (path) {
-              return (
-                <li key={path}>
-                  <Link
-                    onClick={handleOnClick}
-                    href={path}
-                    className="h-8 items-center justify-center text-sm font-medium px-3 py-2 inline-flex text-secondary-foreground transition-opacity hover:opacity-70 duration-200"
-                  >
-                    {title}
-                  </Link>
-                </li>
-              );
-            }
-
-            return (
-              <li
-                key={title}
-                className="group"
-                onMouseEnter={() => setShowBlur(true)}
-                onMouseLeave={() => setShowBlur(false)}
-              >
-                <span className="h-8 items-center justify-center text-sm font-medium transition-opacity hover:opacity-70 duration-200 px-3 py-2 inline-flex text-secondary-foreground cursor-pointer">
-                  {title}
-                </span>
-
-                {children && (
+                  Features
+                  <Icons.ArrowDropDown
+                    className={`w-4 h-4 transition-transform duration-200 ${isFeaturesOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {/* Invisible bridge to dropdown */}
+                {isFeaturesOpen && (
                   <div
-                    className={cn(
-                      "absolute top-[48px] left-0 -mx-[calc(var(--pixel-ratio)_*_2px)] bg-[#fff] dark:bg-[#121212] flex h-0 group-hover:h-[250px] overflow-hidden transition-all duration-300 ease-in-out border-l border-r",
-                      hidden && "hidden",
-                    )}
-                  >
-                    <ul className="p-4 w-[200px] flex-0 space-y-4 mt-2">
-                      {children.map((child) => {
-                        return (
-                          <li key={child.path}>
-                            <Link
-                              onClick={handleOnClick}
-                              href={child.path}
-                              className="flex space-x-2 items-center transition-opacity hover:opacity-70 duration-200"
-                            >
-                              <span>{child.icon}</span>
-                              <span className="text-sm font-medium">
-                                {child.title}
-                              </span>
-                            </Link>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    className="absolute left-0 right-0 h-4"
+                    style={{ top: "100%" }}
+                  />
+                )}
 
-                    <div className="flex-1 p-4">{cover}</div>
-                    <div className="absolute bottom-0 w-full border-b-[1px]" />
+                {/* Features Dropdown - Full Width */}
+                {isFeaturesOpen && (
+                  <div
+                    data-features-dropdown
+                    className="fixed left-0 right-0 bg-background border-t border-b border-border shadow-lg z-50 overflow-hidden opacity-0 animate-dropdown-fade"
+                    style={{ top: "100%" }}
+                  >
+                    <div className="p-6 xl:p-8 2xl:p-10">
+                      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
+                        {/* Column 1 & 2 - Features List (2 columns) */}
+                        <div
+                          className="lg:col-span-2 xl:max-w-xl 2xl:max-w-xl"
+                          ref={featuresListRef}
+                        >
+                          <div className="grid grid-cols-2 gap-x-4">
+                            {/* Column 1 */}
+                            <div>
+                              {[
+                                {
+                                  href: "/assistant",
+                                  title: "Assistant",
+                                  desc: "Ask questions and get clear financial answers",
+                                },
+                                {
+                                  href: "/insights",
+                                  title: "Insights",
+                                  desc: "See what's changing",
+                                },
+                                {
+                                  href: "/transactions",
+                                  title: "Transactions",
+                                  desc: "All transactions together",
+                                },
+                                {
+                                  href: "/inbox",
+                                  title: "Inbox",
+                                  desc: "Receipts handled automatically",
+                                },
+                              ].map((item, index) => (
+                                <div
+                                  key={item.href}
+                                  className="opacity-0 animate-dropdown-slide"
+                                  style={{ animationDelay: `${index * 30}ms` }}
+                                >
+                                  <Link
+                                    href={item.href}
+                                    className="flex items-center py-3 group hover:bg-secondary transition-colors duration-200"
+                                    onClick={() => setIsFeaturesOpen(false)}
+                                  >
+                                    <div className="flex flex-col pl-2">
+                                      <span className="font-sans text-base text-foreground mb-1">
+                                        {item.title}
+                                      </span>
+                                      <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                        {item.desc}
+                                      </span>
+                                    </div>
+                                  </Link>
+                                </div>
+                              ))}
+                            </div>
+                            {/* Column 2 */}
+                            <div>
+                              {[
+                                {
+                                  href: "/time-tracking",
+                                  title: "Time tracking",
+                                  desc: "See where time goes",
+                                },
+                                {
+                                  href: "/invoicing",
+                                  title: "Invoicing",
+                                  desc: "Get paid faster",
+                                },
+                                {
+                                  href: "/customers",
+                                  title: "Customers",
+                                  desc: "Know your customers",
+                                },
+                                {
+                                  href: "/file-storage",
+                                  title: "Files",
+                                  desc: "Everything in one place",
+                                },
+                              ].map((item, index) => (
+                                <div
+                                  key={item.href}
+                                  className="opacity-0 animate-dropdown-slide"
+                                  style={{
+                                    animationDelay: `${(index + 4) * 30}ms`,
+                                  }}
+                                >
+                                  <Link
+                                    href={item.href}
+                                    className="flex items-center py-3 group hover:bg-secondary transition-colors duration-200"
+                                    onClick={() => setIsFeaturesOpen(false)}
+                                  >
+                                    <div className="flex flex-col pl-2">
+                                      <span className="font-sans text-base text-foreground mb-1">
+                                        {item.title}
+                                      </span>
+                                      <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                        {item.desc}
+                                      </span>
+                                    </div>
+                                  </Link>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Column 3 & 4 - Preview Cards */}
+                        <div className="lg:col-span-2 flex items-start justify-end gap-4 flex-nowrap">
+                          {/* Pre-accounting Preview */}
+                          <Link
+                            ref={preAccountingRef}
+                            href="/pre-accounting"
+                            onClick={() => setIsFeaturesOpen(false)}
+                            className="w-full max-w-[320px] lg:w-[320px] lg:max-w-none xl:w-[350px] 2xl:w-[400px] h-[277px] border border-border overflow-hidden cursor-pointer hover:opacity-90 hover:border-foreground/20 hover:scale-[1.02] transition-all duration-200 flex flex-col flex-shrink-0"
+                          >
+                            <div className="h-[214px] flex items-center justify-center bg-background p-4">
+                              <Image
+                                src="/images/accounting-light.png"
+                                alt="Pre-accounting"
+                                width={112}
+                                height={400}
+                                className="h-auto w-auto max-h-[80px] object-contain dark:hidden"
+                              />
+                              <Image
+                                src="/images/accounting-dark.png"
+                                alt="Pre-accounting"
+                                width={112}
+                                height={400}
+                                className="h-auto w-auto max-h-[80px] object-contain hidden dark:block"
+                              />
+                            </div>
+                            <div className="bg-background border-t border-border p-2.5 flex items-center justify-between gap-4">
+                              <div className="flex-1">
+                                <span className="font-sans text-xs text-foreground block">
+                                  Pre-accounting
+                                </span>
+                                <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                  Clean records ready for your accountant
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <div className="w-6 h-6 border border-border flex items-center justify-center bg-background">
+                                  <Image
+                                    src="/images/xero.svg"
+                                    alt="Xero"
+                                    width={14}
+                                    height={14}
+                                    className="object-contain opacity-70"
+                                  />
+                                </div>
+                                <div className="w-6 h-6 border border-border flex items-center justify-center bg-background">
+                                  <Image
+                                    src="/images/quickbooks.svg"
+                                    alt="QuickBooks"
+                                    width={14}
+                                    height={14}
+                                    className="object-contain opacity-70"
+                                  />
+                                </div>
+                                <div className="w-6 h-6 border border-border flex items-center justify-center bg-background">
+                                  <Image
+                                    src="/images/fortnox.svg"
+                                    alt="Fortnox"
+                                    width={14}
+                                    height={14}
+                                    className="object-contain opacity-70"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </Link>
+
+                          {/* Customer Stories Preview */}
+                          <Link
+                            href="/testimonials"
+                            onClick={() => setIsFeaturesOpen(false)}
+                            className="w-full max-w-[320px] lg:w-[320px] lg:max-w-none xl:w-[350px] 2xl:w-[400px] h-[277px] border border-border overflow-visible cursor-pointer hover:opacity-90 hover:border-foreground/20 hover:scale-[1.02] transition-all duration-200 flex flex-col flex-shrink-0"
+                          >
+                            <div className="flex-1 flex items-center justify-center bg-background p-4 relative overflow-visible">
+                              <span className="absolute top-[89%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-[20rem] xl:text-[22rem] 2xl:text-[24rem] text-muted-foreground opacity-10 pointer-events-none select-none z-0 whitespace-nowrap leading-none font-serif">
+                                &rdquo;
+                              </span>
+                              {(() => {
+                                const testimonial =
+                                  headerTestimonials[currentTestimonialIndex];
+                                if (!testimonial) return null;
+                                const firstSentenceEnd =
+                                  testimonial.content.match(/[.!?]\s/);
+                                const firstSentence = firstSentenceEnd
+                                  ? testimonial.content.substring(
+                                      0,
+                                      firstSentenceEnd.index! + 1,
+                                    )
+                                  : testimonial.content;
+                                return (
+                                  <div className="relative font-serif text-sm xl:text-base 2xl:text-lg leading-tight text-center px-2 line-clamp-3 w-full z-10">
+                                    <span className="text-primary">
+                                      &ldquo;{firstSentence}&rdquo;
+                                    </span>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                            <div className="bg-background border-t border-border p-2.5 flex items-center justify-between gap-4">
+                              <div className="flex-1">
+                                <span className="font-sans text-xs text-foreground block">
+                                  Customer Stories
+                                </span>
+                                <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                  See how founders use Midday
+                                </span>
+                              </div>
+                              {(() => {
+                                const testimonial =
+                                  headerTestimonials[currentTestimonialIndex];
+                                if (!testimonial?.image) return null;
+                                return (
+                                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                                    <div className="w-6 h-6 flex items-center justify-center bg-background overflow-hidden">
+                                      <Image
+                                        src={testimonial.image}
+                                        alt={testimonial.name}
+                                        width={24}
+                                        height={24}
+                                        className="w-full h-full object-cover opacity-70"
+                                        style={{ filter: "grayscale(100%)" }}
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </Link>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
-              </li>
-            );
-          })}
-        </ul>
+              </div>
 
-        <button
-          type="button"
-          className="ml-auto md:hidden p-2"
-          onClick={() => handleToggleMenu()}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width={18}
-            height={13}
-            fill="none"
-          >
-            <path
-              fill="currentColor"
-              d="M0 12.195v-2.007h18v2.007H0Zm0-5.017V5.172h18v2.006H0Zm0-5.016V.155h18v2.007H0Z"
-            />
-          </svg>
-        </button>
-
-        <a
-          className="text-sm font-medium pr-2 border-l-[1px] border-border pl-4 hidden md:block"
-          href="https://app.midday.ai"
-        >
-          Sign in
-        </a>
-      </nav>
-
-      {isOpen && (
-        <motion.div
-          className="fixed bg-background -top-[2px] right-0 left-0 bottom-0 h-screen z-10 px-2"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        >
-          <div className="mt-4 flex justify-between p-3 px-4 relative ml-[1px]">
-            <button type="button" onClick={handleToggleMenu}>
-              <span className="sr-only">Midday Logo</span>
-              <Icons.LogoSmall />
-            </button>
-
-            <button
-              type="button"
-              className="ml-auto md:hidden p-2 absolute right-[10px] top-2"
-              onClick={handleToggleMenu}
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width={24}
-                height={24}
-                className="fill-primary"
+              <Link
+                href="/pricing"
+                className="text-sm transition-colors text-muted-foreground hover:text-foreground"
               >
-                <path fill="none" d="M0 0h24v24H0V0z" />
-                <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" />
-              </svg>
-            </button>
-          </div>
+                Pricing
+              </Link>
+              <Link
+                href="/story"
+                className="text-sm transition-colors text-muted-foreground hover:text-foreground"
+              >
+                Story
+              </Link>
+              <Link
+                href="/download"
+                className="text-sm transition-colors text-muted-foreground hover:text-foreground"
+              >
+                Download
+              </Link>
 
-          <div className="h-screen pb-[150px] overflow-auto">
-            <motion.ul
-              initial="hidden"
-              animate="show"
-              className="px-3 pt-8 text-xl text-[#878787] space-y-8 mb-8 overflow-auto"
-              variants={listVariant}
-            >
-              {links.map(({ path, title, children }, index) => {
-                const isActive =
-                  path === "/updates"
-                    ? pathname.includes("updates")
-                    : path === lastPath;
+              {/* Resources with Dropdown */}
+              <div
+                className="relative -mx-3 -my-2"
+                onMouseEnter={() => {
+                  if (appsTimeoutRef.current) {
+                    clearTimeout(appsTimeoutRef.current);
+                  }
+                  prefetchApps();
+                  setIsAppsOpen(true);
+                }}
+                onMouseLeave={() => {
+                  appsTimeoutRef.current = setTimeout(() => {
+                    setIsAppsOpen(false);
+                  }, 200);
+                }}
+              >
+                <button
+                  type="button"
+                  className="text-sm transition-colors text-muted-foreground hover:text-foreground px-3 py-2 flex items-center gap-1"
+                >
+                  Resources
+                  <Icons.ArrowDropDown
+                    className={`w-4 h-4 transition-transform duration-200 ${isAppsOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {/* Invisible bridge to dropdown */}
+                {isAppsOpen && (
+                  <div
+                    className="absolute left-0 right-0 h-4"
+                    style={{ top: "100%" }}
+                  />
+                )}
 
-                if (path) {
-                  return (
-                    <motion.li variants={itemVariant} key={path}>
-                      <Link
-                        href={path}
-                        className={cn(isActive && "text-primary")}
-                        onClick={handleToggleMenu}
-                      >
-                        {title}
-                      </Link>
-                    </motion.li>
-                  );
-                }
-
-                return (
-                  <li key={title}>
-                    <Accordion collapsible type="single">
-                      <AccordionItem value="item-1" className="border-none">
-                        <AccordionTrigger className="flex items-center justify-between w-full font-normal p-0 hover:no-underline">
-                          <span className="text-[#878787]">{title}</span>
-                        </AccordionTrigger>
-
-                        {children && (
-                          <AccordionContent className="text-xl">
-                            <ul className="space-y-8 ml-4 mt-6">
-                              {children.map((child) => {
-                                return (
-                                  <li key={child.path}>
-                                    <Link
-                                      onClick={handleToggleMenu}
-                                      href={child.path}
-                                      className="text-[#878787]"
+                {/* Resources Dropdown - Full Width */}
+                {isAppsOpen && (
+                  <div
+                    className="fixed left-0 right-0 bg-background border-t border-b border-border shadow-lg z-50 overflow-hidden opacity-0 animate-dropdown-fade"
+                    style={{
+                      top: "100%",
+                      height:
+                        featuresDropdownHeight !== null
+                          ? `${featuresDropdownHeight}px`
+                          : "auto",
+                    }}
+                  >
+                    <div className="p-6 xl:p-8 2xl:p-10 h-full">
+                      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 xl:gap-6 items-start h-full">
+                        {/* Column 1 & 2 - Apps List (2 columns) */}
+                        <div
+                          ref={appsListRef}
+                          className="lg:col-span-2 lg:max-w-md xl:max-w-lg 2xl:max-w-xl"
+                        >
+                          <div className="grid grid-cols-2 gap-x-4">
+                            {/* Column 1 */}
+                            <div>
+                              {[
+                                {
+                                  href: "/integrations",
+                                  title: "Integrations",
+                                  desc: "Connect your existing tools.",
+                                  external: false,
+                                },
+                                {
+                                  href: "/docs",
+                                  title: "Documentation",
+                                  desc: "Learn how to use Midday.",
+                                  external: false,
+                                },
+                                {
+                                  href: "/mcp",
+                                  title: "AI Integrations",
+                                  desc: "Connect AI tools to your financial data.",
+                                  external: false,
+                                },
+                              ].map((item, index) => (
+                                <div
+                                  key={item.href}
+                                  className="opacity-0 animate-dropdown-slide"
+                                  style={{ animationDelay: `${index * 30}ms` }}
+                                >
+                                  <Link
+                                    href={item.href}
+                                    className="flex items-center py-3 group hover:bg-secondary transition-colors duration-200"
+                                    onClick={() => setIsAppsOpen(false)}
+                                  >
+                                    <div className="flex flex-col pl-2">
+                                      <span className="font-sans text-base text-foreground mb-1">
+                                        {item.title}
+                                      </span>
+                                      <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                        {item.desc}
+                                      </span>
+                                    </div>
+                                  </Link>
+                                </div>
+                              ))}
+                            </div>
+                            {/* Column 2 */}
+                            <div>
+                              {[
+                                {
+                                  href: "https://api.midday.ai",
+                                  title: "Developer & API",
+                                  desc: "Programmatic access to Midday.",
+                                  external: true,
+                                },
+                                {
+                                  href: "/sdks",
+                                  title: "SDKs",
+                                  desc: "Typed SDKs to build faster.",
+                                  external: false,
+                                },
+                              ].map((item, index) => (
+                                <div
+                                  key={`${item.href}-${item.title}`}
+                                  className="opacity-0 animate-dropdown-slide"
+                                  style={{
+                                    animationDelay: `${(index + 2) * 30}ms`,
+                                  }}
+                                >
+                                  {item.external ? (
+                                    <a
+                                      href={item.href}
+                                      className="flex items-center py-3 group hover:bg-secondary transition-colors duration-200"
+                                      onClick={() => setIsAppsOpen(false)}
                                     >
-                                      {child.title}
+                                      <div className="flex flex-col pl-2">
+                                        <span className="font-sans text-base text-foreground mb-1">
+                                          {item.title}
+                                        </span>
+                                        <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                          {item.desc}
+                                        </span>
+                                      </div>
+                                    </a>
+                                  ) : (
+                                    <Link
+                                      href={item.href}
+                                      className="flex items-center py-3 group hover:bg-secondary transition-colors duration-200"
+                                      onClick={() => setIsAppsOpen(false)}
+                                    >
+                                      <div className="flex flex-col pl-2">
+                                        <span className="font-sans text-base text-foreground mb-1">
+                                          {item.title}
+                                        </span>
+                                        <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                          {item.desc}
+                                        </span>
+                                      </div>
                                     </Link>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </AccordionContent>
-                        )}
-                      </AccordionItem>
-                    </Accordion>
-                  </li>
-                );
-              })}
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
 
-              <motion.li
-                className="mt-auto border-t-[1px] pt-8"
-                variants={itemVariant}
-              >
+                        {/* Columns 3 & 4 - Image Previews Container */}
+                        <div className="lg:col-span-2 flex items-start justify-end gap-4 flex-nowrap">
+                          {/* Integrations Preview */}
+                          <Link
+                            ref={integrationsAppRef}
+                            href="/integrations"
+                            onClick={() => setIsAppsOpen(false)}
+                            className="w-full max-w-[320px] lg:w-[320px] lg:max-w-none xl:w-[350px] 2xl:w-[400px] h-[277px] border border-border overflow-hidden cursor-pointer hover:opacity-90 hover:border-foreground/20 hover:scale-[1.02] transition-all duration-200 flex flex-col flex-shrink-0"
+                          >
+                            <div className="flex-1">
+                              <HeaderIntegrationsPreview />
+                            </div>
+                            <div className="bg-background border-t border-border p-2.5 flex items-center justify-between gap-4">
+                              <div className="flex-1">
+                                <span className="font-sans text-xs text-foreground block">
+                                  Integrations
+                                </span>
+                                <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                  Connect your existing tools.
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-shrink-0 relative h-6">
+                                {visibleIntegrations.map((item) => (
+                                  <div
+                                    key={item.key}
+                                    className="w-6 h-6 border border-border flex items-center justify-center bg-background transition-all duration-300"
+                                  >
+                                    <Image
+                                      src={allIntegrations[item.id]?.src ?? ""}
+                                      alt={allIntegrations[item.id]?.alt ?? ""}
+                                      width={14}
+                                      height={14}
+                                      className="object-contain opacity-70"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </Link>
+
+                          {/* Mac App Preview */}
+                          <Link
+                            ref={macAppRef}
+                            href="/download"
+                            onClick={() => setIsAppsOpen(false)}
+                            className="w-full max-w-[320px] lg:w-[320px] lg:max-w-none xl:w-[350px] 2xl:w-[400px] h-[277px] border border-border overflow-hidden cursor-pointer hover:opacity-90 hover:border-foreground/20 hover:scale-[1.02] transition-all duration-200 flex flex-col flex-shrink-0"
+                          >
+                            <div className="flex-1 flex items-center justify-center bg-background p-4">
+                              <Image
+                                src="/images/header-dock-light.png"
+                                alt="Mac Dock"
+                                width={1200}
+                                height={300}
+                                className="w-3/4 h-auto object-contain dark:hidden"
+                              />
+                              <Image
+                                src="/images/header-dock-dark.png"
+                                alt="Mac Dock"
+                                width={1200}
+                                height={300}
+                                className="w-3/4 h-auto object-contain hidden dark:block"
+                              />
+                            </div>
+                            <div className="bg-background border-t border-border p-2.5">
+                              <span className="font-sans text-xs text-foreground block">
+                                Mac app
+                              </span>
+                              <span className="font-sans text-xs text-muted-foreground group-hover:text-foreground transition-colors duration-200">
+                                Your finances, always one click away.
+                              </span>
+                            </div>
+                          </Link>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Sign in */}
+              <div className="border-l border-border pl-4">
                 <Link
-                  className="text-xl text-primary"
-                  href="https://app.midday.ai"
+                  href="https://app.midday.ai/"
+                  className="text-sm transition-colors text-primary hover:text-primary/80"
                 >
                   Sign in
                 </Link>
-              </motion.li>
-            </motion.ul>
-          </div>
-        </motion.div>
-      )}
+              </div>
+            </div>
+          )}
 
-      <div
-        className={cn(
-          "fixed w-screen h-screen backdrop-blur-md left-0 top-0 invisible opacity-0 transition-all duration-300 z-10",
-          showBlur && "md:visible opacity-100",
-        )}
-      />
-    </header>
+          {/* Mobile & Tablet Hamburger Menu */}
+          <div className="xl:hidden flex items-center">
+            <button
+              type="button"
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className="relative transition-colors flex items-center justify-end p-2 min-w-[44px] min-h-[44px] text-primary hover:text-primary/80 xl:active:text-primary focus:outline-none focus-visible:outline-none touch-manipulation"
+              style={{
+                WebkitTapHighlightColor: "transparent",
+              }}
+              aria-label={isMenuOpen ? "Close menu" : "Open menu"}
+            >
+              <div className="relative size-5 flex flex-col justify-center items-center">
+                <motion.span
+                  className="absolute w-4 h-[1.5px] bg-current rounded-none"
+                  animate={{
+                    rotate: isMenuOpen ? 45 : 0,
+                    y: isMenuOpen ? 0 : -4.5,
+                  }}
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                />
+                <motion.span
+                  className="absolute w-4 h-[1.5px] bg-current rounded-none"
+                  animate={{
+                    opacity: isMenuOpen ? 0 : 1,
+                    scaleX: isMenuOpen ? 0 : 1,
+                  }}
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                />
+                <motion.span
+                  className="absolute w-4 h-[1.5px] bg-current rounded-none"
+                  animate={{
+                    rotate: isMenuOpen ? -45 : 0,
+                    y: isMenuOpen ? 0 : 4.5,
+                  }}
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                />
+              </div>
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* Mobile & Tablet Menu Overlay */}
+      {isMenuOpen && (
+        <div className="fixed inset-0 z-40 xl:hidden bg-background">
+          <div className="pt-28 px-6">
+            <div className="flex flex-col space-y-6 text-left">
+              {/* Features Expandable Section */}
+              <div className="flex flex-col">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    setIsMobileFeaturesOpen(!isMobileFeaturesOpen);
+                    e.currentTarget.blur();
+                  }}
+                  onTouchEnd={(e) => {
+                    e.currentTarget.blur();
+                  }}
+                  className="text-2xl font-sans transition-colors py-2 text-primary hover:text-primary xl:active:text-primary focus:outline-none focus-visible:outline-none touch-manipulation flex items-center justify-between"
+                  style={{
+                    WebkitTapHighlightColor: "transparent",
+                  }}
+                >
+                  <span>Features</span>
+                  <Icons.ArrowDropDown
+                    className={`w-6 h-6 transition-transform duration-200 ${
+                      isMobileFeaturesOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+                {isMobileFeaturesOpen && (
+                  <>
+                    <div className="h-px w-full border-t border-border my-2" />
+                    <div className="overflow-hidden opacity-0 animate-mobile-slide">
+                      <div className="flex flex-col space-y-4 pt-2">
+                        <Link
+                          href="/assistant"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileFeaturesOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Assistant
+                        </Link>
+                        <Link
+                          href="/insights"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileFeaturesOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Insights
+                        </Link>
+                        <Link
+                          href="/transactions"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileFeaturesOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Transactions
+                        </Link>
+                        <Link
+                          href="/inbox"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileFeaturesOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Inbox
+                        </Link>
+                        <Link
+                          href="/time-tracking"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileFeaturesOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Time tracking
+                        </Link>
+                        <Link
+                          href="/invoicing"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileFeaturesOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Invoicing
+                        </Link>
+                        <Link
+                          href="/customers"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileFeaturesOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Customers
+                        </Link>
+                        <Link
+                          href="/file-storage"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileFeaturesOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Files
+                        </Link>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <Link
+                href="/pricing"
+                onTouchEnd={(e) => {
+                  const target = e.currentTarget;
+                  if (target) {
+                    target.blur();
+                    setTimeout(() => {
+                      if (target) {
+                        target.blur();
+                      }
+                    }, 100);
+                  }
+                }}
+                className="no-touch-active text-2xl font-sans transition-colors py-2 text-primary hover:text-primary xl:active:text-primary focus:outline-none focus-visible:outline-none touch-manipulation"
+                onClick={() => setIsMenuOpen(false)}
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                Pricing
+              </Link>
+              <Link
+                href="/story"
+                onTouchEnd={(e) => {
+                  const target = e.currentTarget;
+                  if (target) {
+                    target.blur();
+                    setTimeout(() => {
+                      if (target) {
+                        target.blur();
+                      }
+                    }, 100);
+                  }
+                }}
+                className="no-touch-active text-2xl font-sans transition-colors py-2 text-primary hover:text-primary xl:active:text-primary focus:outline-none focus-visible:outline-none touch-manipulation"
+                onClick={() => setIsMenuOpen(false)}
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                Story
+              </Link>
+              <Link
+                href="/download"
+                onTouchEnd={(e) => {
+                  const target = e.currentTarget;
+                  if (target) {
+                    target.blur();
+                    setTimeout(() => {
+                      if (target) {
+                        target.blur();
+                      }
+                    }, 100);
+                  }
+                }}
+                className="no-touch-active text-2xl font-sans transition-colors py-2 text-primary hover:text-primary xl:active:text-primary focus:outline-none focus-visible:outline-none touch-manipulation"
+                onClick={() => setIsMenuOpen(false)}
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                Download
+              </Link>
+
+              {/* Resources Expandable Section */}
+              <div className="flex flex-col">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    setIsMobileAppsOpen(!isMobileAppsOpen);
+                    e.currentTarget.blur();
+                  }}
+                  onTouchEnd={(e) => {
+                    e.currentTarget.blur();
+                  }}
+                  className="text-2xl font-sans transition-colors py-2 text-primary hover:text-primary xl:active:text-primary focus:outline-none focus-visible:outline-none touch-manipulation flex items-center justify-between"
+                  style={{
+                    WebkitTapHighlightColor: "transparent",
+                  }}
+                >
+                  <span>Resources</span>
+                  <Icons.ArrowDropDown
+                    className={`w-6 h-6 transition-transform duration-200 ${
+                      isMobileAppsOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+                {isMobileAppsOpen && (
+                  <>
+                    <div className="h-px w-full border-t border-border my-2" />
+                    <div className="overflow-hidden opacity-0 animate-mobile-slide">
+                      <div className="flex flex-col space-y-4 pt-2">
+                        <Link
+                          href="/integrations"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileAppsOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Integrations
+                        </Link>
+                        <Link
+                          href="/docs"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileAppsOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Documentation
+                        </Link>
+                        <Link
+                          href="/mcp"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileAppsOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          AI Integrations
+                        </Link>
+                        <a
+                          href="https://api.midday.ai"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileAppsOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          Developer & API
+                        </a>
+                        <Link
+                          href="/sdks"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setIsMobileAppsOpen(false);
+                          }}
+                          className="text-lg font-sans text-left text-muted-foreground hover:text-muted-foreground xl:active:text-muted-foreground focus:outline-none focus-visible:outline-none touch-manipulation transition-colors"
+                          style={{ WebkitTapHighlightColor: "transparent" }}
+                        >
+                          SDKs
+                        </Link>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Sign in */}
+              <div className="border-t border-border pt-8 mt-8">
+                <Link
+                  href="https://app.midday.ai/"
+                  onTouchEnd={(e) => {
+                    const target = e.currentTarget;
+                    if (target) {
+                      target.blur();
+                      setTimeout(() => {
+                        if (target) {
+                          target.blur();
+                        }
+                      }, 100);
+                    }
+                  }}
+                  className="text-2xl font-sans transition-colors py-2 text-primary hover:text-primary xl:active:text-primary focus:outline-none focus-visible:outline-none touch-manipulation"
+                  onClick={() => setIsMenuOpen(false)}
+                  style={{ WebkitTapHighlightColor: "transparent" }}
+                >
+                  Sign in
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

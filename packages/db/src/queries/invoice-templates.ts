@@ -1,6 +1,6 @@
-import type { Database } from "@db/client";
-import { invoiceTemplates } from "@db/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
+import type { Database } from "../client";
+import { invoiceTemplates } from "../schema";
 
 type InvoiceTemplateParams = {
   customerLabel?: string;
@@ -41,6 +41,7 @@ type InvoiceTemplateParams = {
   deliveryType?: "create" | "create_and_send" | "scheduled";
   includePdf?: boolean;
   paymentEnabled?: boolean;
+  paymentTermsDays?: number;
 };
 
 type CreateInvoiceTemplateParams = {
@@ -98,6 +99,11 @@ const templateSelectFields = {
   includePdf: invoiceTemplates.includePdf,
   sendCopy: invoiceTemplates.sendCopy,
   paymentEnabled: invoiceTemplates.paymentEnabled,
+  paymentTermsDays: invoiceTemplates.paymentTermsDays,
+  emailSubject: invoiceTemplates.emailSubject,
+  emailHeading: invoiceTemplates.emailHeading,
+  emailBody: invoiceTemplates.emailBody,
+  emailButtonText: invoiceTemplates.emailButtonText,
 };
 
 /**

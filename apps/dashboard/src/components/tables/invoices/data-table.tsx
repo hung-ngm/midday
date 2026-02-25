@@ -1,5 +1,12 @@
 "use client";
 
+import { closestCenter, DndContext } from "@dnd-kit/core";
+import { Table, TableBody } from "@midday/ui/table";
+import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
+import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
+import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import { AnimatePresence } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { VirtualRow } from "@/components/tables/core";
 import { useInfiniteScroll } from "@/hooks/use-infinite-scroll";
 import { useInvoiceFilterParams } from "@/hooks/use-invoice-filter-params";
@@ -14,14 +21,7 @@ import { useUserQuery } from "@/hooks/use-user";
 import { useInvoiceStore } from "@/store/invoice";
 import { useTRPC } from "@/trpc/client";
 import { STICKY_COLUMNS, SUMMARY_GRID_HEIGHTS } from "@/utils/table-configs";
-import type { TableSettings } from "@/utils/table-settings";
-import { DndContext, closestCenter } from "@dnd-kit/core";
-import { Table, TableBody, TableCell, TableRow } from "@midday/ui/table";
-import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
-import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { type VirtualItem, useVirtualizer } from "@tanstack/react-virtual";
-import { AnimatePresence } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { getColumnIds, type TableSettings } from "@/utils/table-settings";
 import { BottomBar } from "./bottom-bar";
 import { columns } from "./columns";
 import { EmptyState, NoResults } from "./empty-states";
@@ -29,6 +29,8 @@ import { DataTableHeader } from "./table-header";
 
 // Stable reference for non-clickable columns (avoids recreation on each render)
 const NON_CLICKABLE_COLUMNS = new Set(["select", "actions"]);
+
+const COLUMN_IDS = getColumnIds(columns);
 
 type Props = {
   initialSettings?: Partial<TableSettings>;
@@ -58,6 +60,7 @@ export function DataTable({ initialSettings }: Props) {
   } = useTableSettings({
     tableId: "invoices",
     initialSettings,
+    columnIds: COLUMN_IDS,
   });
 
   const infiniteQueryOptions = trpc.invoice.get.infiniteQueryOptions(
@@ -205,38 +208,27 @@ export function DataTable({ initialSettings }: Props) {
                   position: "relative",
                 }}
               >
-                {virtualItems.length > 0 ? (
-                  virtualItems.map((virtualRow: VirtualItem) => {
-                    const row = rows[virtualRow.index];
-                    if (!row) return null;
+                {virtualItems.map((virtualRow: VirtualItem) => {
+                  const row = rows[virtualRow.index];
+                  if (!row) return null;
 
-                    return (
-                      <VirtualRow
-                        key={row.id}
-                        row={row}
-                        virtualStart={virtualRow.start}
-                        rowHeight={57}
-                        getStickyStyle={getStickyStyle}
-                        getStickyClassName={getStickyClassName}
-                        nonClickableColumns={NON_CLICKABLE_COLUMNS}
-                        onCellClick={handleCellClick}
-                        columnSizing={columnSizing}
-                        columnOrder={columnOrder}
-                        columnVisibility={columnVisibility}
-                        isSelected={rowSelection[row.id] ?? false}
-                      />
-                    );
-                  })
-                ) : (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length}
-                      className="h-24 text-center"
-                    >
-                      No results.
-                    </TableCell>
-                  </TableRow>
-                )}
+                  return (
+                    <VirtualRow
+                      key={row.id}
+                      row={row}
+                      virtualStart={virtualRow.start}
+                      rowHeight={57}
+                      getStickyStyle={getStickyStyle}
+                      getStickyClassName={getStickyClassName}
+                      nonClickableColumns={NON_CLICKABLE_COLUMNS}
+                      onCellClick={handleCellClick}
+                      columnSizing={columnSizing}
+                      columnOrder={columnOrder}
+                      columnVisibility={columnVisibility}
+                      isSelected={rowSelection[row.id] ?? false}
+                    />
+                  );
+                })}
               </TableBody>
             </Table>
           </DndContext>

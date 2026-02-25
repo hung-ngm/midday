@@ -1,5 +1,4 @@
-import type { UIChatMessage } from "@api/ai/types";
-import { type SQL, relations, sql } from "drizzle-orm";
+import { relations, type SQL, sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -18,6 +17,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
   vector,
@@ -72,6 +72,11 @@ export const connectionStatusEnum = pgEnum("connection_status", [
   "unknown",
 ]);
 
+export const institutionStatusEnum = pgEnum("institution_status", [
+  "active",
+  "removed",
+]);
+
 export const documentProcessingStatusEnum = pgEnum(
   "document_processing_status",
   ["pending", "processing", "completed", "failed"],
@@ -115,9 +120,14 @@ export const inboxStatusEnum = pgEnum("inbox_status", [
   "no_match",
   "done",
   "deleted",
+  "other",
 ]);
 
-export const inboxTypeEnum = pgEnum("inbox_type", ["invoice", "expense"]);
+export const inboxTypeEnum = pgEnum("inbox_type", [
+  "invoice",
+  "expense",
+  "other",
+]);
 export const inboxBlocklistTypeEnum = pgEnum("inbox_blocklist_type", [
   "email",
   "domain",
@@ -137,6 +147,33 @@ export const invoiceStatusEnum = pgEnum("invoice_status", [
   "canceled",
   "scheduled",
   "refunded",
+]);
+
+export const invoiceRecurringFrequencyEnum = pgEnum(
+  "invoice_recurring_frequency",
+  [
+    "weekly",
+    "biweekly", // Every 2 weeks on the same weekday
+    "monthly_date", // Monthly on specific date (e.g., 15th)
+    "monthly_weekday", // Monthly on nth weekday (e.g., 1st Friday)
+    "monthly_last_day", // Monthly on the last day of the month
+    "quarterly", // Every 3 months
+    "semi_annual", // Every 6 months
+    "annual", // Every 12 months
+    "custom", // Every X days
+  ],
+);
+
+export const invoiceRecurringEndTypeEnum = pgEnum(
+  "invoice_recurring_end_type",
+  ["never", "on_date", "after_count"],
+);
+
+export const invoiceRecurringStatusEnum = pgEnum("invoice_recurring_status", [
+  "active",
+  "paused",
+  "completed",
+  "canceled",
 ]);
 
 export const plansEnum = pgEnum("plans", ["trial", "starter", "pro"]);
@@ -208,6 +245,12 @@ export const activityTypeEnum = pgEnum("activity_type", [
   "inbox_match_confirmed",
   "invoice_refunded",
 
+  // Recurring invoice activities
+  "recurring_series_started",
+  "recurring_series_completed",
+  "recurring_series_paused",
+  "recurring_invoice_upcoming",
+
   // User actions
   "document_uploaded",
   "document_processed",
@@ -225,6 +268,7 @@ export const activityTypeEnum = pgEnum("activity_type", [
   "transaction_category_created",
   "transactions_exported",
   "customer_created",
+  "insight_ready",
 ]);
 
 export const activitySourceEnum = pgEnum("activity_source", [
@@ -236,6 +280,20 @@ export const activityStatusEnum = pgEnum("activity_status", [
   "unread",
   "read",
   "archived",
+]);
+
+export const insightPeriodTypeEnum = pgEnum("insight_period_type", [
+  "weekly",
+  "monthly",
+  "quarterly",
+  "yearly",
+]);
+
+export const insightStatusEnum = pgEnum("insight_status", [
+  "pending",
+  "generating",
+  "completed",
+  "failed",
 ]);
 
 export const documentTagEmbeddings = pgTable(
@@ -416,6 +474,14 @@ export const transactions = pgTable(
       "btree",
       table.teamId.asc().nullsLast().op("uuid_ops"),
     ),
+    index("idx_transactions_reports")
+      .using(
+        "btree",
+        table.teamId.asc().nullsLast().op("uuid_ops"),
+        table.date.asc().nullsLast().op("date_ops"),
+        table.categorySlug.asc().nullsLast().op("text_ops"),
+      )
+      .where(sql`internal = false AND status != 'excluded'`),
     foreignKey({
       columns: [table.assignedId],
       foreignColumns: [users.id],
@@ -489,6 +555,8 @@ export const trackerEntries = pgTable(
       "btree",
       table.teamId.asc().nullsLast().op("uuid_ops"),
     ),
+    // Composite index for insights activity date range queries
+    index("tracker_entries_team_date_idx").on(table.teamId, table.date),
     foreignKey({
       columns: [table.assignedId],
       foreignColumns: [users.id],
@@ -639,6 +707,18 @@ export const bankAccounts = pgTable(
     errorDetails: text("error_details"),
     errorRetries: smallint("error_retries"),
     accountReference: text("account_reference"),
+    // Additional account data for reconnect matching and user display
+    iban: text(), // IBAN (EU/UK) - encrypted at rest
+    subtype: text(), // Granular type: checking, savings, credit_card, money_market, etc.
+    bic: text(), // Bank Identifier Code / SWIFT
+    // US bank account details (Teller, Plaid)
+    routingNumber: text("routing_number"), // ACH routing number
+    wireRoutingNumber: text("wire_routing_number"), // Wire routing number
+    accountNumber: text("account_number"), // Full account number - encrypted at rest
+    sortCode: text("sort_code"), // UK BACS sort code
+    // Credit account balances
+    availableBalance: numericCasted({ precision: 10, scale: 2 }), // Available credit (cards) or available funds
+    creditLimit: numericCasted({ precision: 10, scale: 2 }), // Credit limit (cards only)
   },
   (table) => [
     index("bank_accounts_bank_connection_id_idx").using(
@@ -688,6 +768,114 @@ export const bankAccounts = pgTable(
       as: "permissive",
       for: "update",
       to: ["public"],
+    }),
+  ],
+);
+
+export const invoiceRecurring = pgTable(
+  "invoice_recurring",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).defaultNow(),
+    teamId: uuid("team_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    customerId: uuid("customer_id"),
+    // Frequency settings
+    frequency: invoiceRecurringFrequencyEnum().notNull(),
+    frequencyDay: integer("frequency_day"), // 0-6 for weekly (day of week), 1-31 for monthly_date
+    frequencyWeek: integer("frequency_week"), // 1-5 for monthly_weekday (e.g., 1st, 2nd Friday)
+    frequencyInterval: integer("frequency_interval"), // For custom: every X days
+    // End conditions
+    endType: invoiceRecurringEndTypeEnum("end_type").notNull(),
+    endDate: timestamp("end_date", { withTimezone: true, mode: "string" }),
+    endCount: integer("end_count"),
+    // Status tracking
+    status: invoiceRecurringStatusEnum().default("active").notNull(),
+    invoicesGenerated: integer("invoices_generated").default(0).notNull(),
+    consecutiveFailures: integer("consecutive_failures").default(0).notNull(), // Track failures for auto-pause
+    nextScheduledAt: timestamp("next_scheduled_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    lastGeneratedAt: timestamp("last_generated_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    timezone: text().notNull(), // User's timezone for correct day-of-week calculation
+    // Invoice template data
+    dueDateOffset: integer("due_date_offset").default(30).notNull(), // Days from issue date to due date
+    amount: numericCasted({ precision: 10, scale: 2 }),
+    currency: text(),
+    lineItems: jsonb("line_items"),
+    template: jsonb(), // Invoice template snapshot (labels, settings, etc.)
+    paymentDetails: jsonb("payment_details"),
+    fromDetails: jsonb("from_details"),
+    noteDetails: jsonb("note_details"),
+    customerName: text("customer_name"),
+    vat: numericCasted({ precision: 10, scale: 2 }),
+    tax: numericCasted({ precision: 10, scale: 2 }),
+    discount: numericCasted({ precision: 10, scale: 2 }),
+    subtotal: numericCasted({ precision: 10, scale: 2 }),
+    topBlock: jsonb("top_block"),
+    bottomBlock: jsonb("bottom_block"),
+    templateId: uuid("template_id"),
+    // Notification tracking
+    upcomingNotificationSentAt: timestamp("upcoming_notification_sent_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+  },
+  (table) => [
+    index("invoice_recurring_team_id_idx").using(
+      "btree",
+      table.teamId.asc().nullsLast().op("uuid_ops"),
+    ),
+    index("invoice_recurring_next_scheduled_at_idx").using(
+      "btree",
+      table.nextScheduledAt.asc().nullsLast().op("timestamptz_ops"),
+    ),
+    index("invoice_recurring_status_idx").using(
+      "btree",
+      table.status.asc().nullsLast(),
+    ),
+    // Compound partial index for scheduler query
+    index("invoice_recurring_active_scheduled_idx")
+      .using(
+        "btree",
+        table.nextScheduledAt.asc().nullsLast().op("timestamptz_ops"),
+      )
+      .where(sql`status = 'active'`),
+    foreignKey({
+      columns: [table.teamId],
+      foreignColumns: [teams.id],
+      name: "invoice_recurring_team_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.userId],
+      foreignColumns: [users.id],
+      name: "invoice_recurring_user_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.customerId],
+      foreignColumns: [customers.id],
+      name: "invoice_recurring_customer_id_fkey",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [table.templateId],
+      foreignColumns: [invoiceTemplates.id],
+      name: "invoice_recurring_template_id_fkey",
+    }).onDelete("set null"),
+    pgPolicy("Invoice recurring can be handled by a member of the team", {
+      as: "permissive",
+      for: "all",
+      to: ["public"],
+      using: sql`(team_id IN ( SELECT private.get_teams_for_authenticated_user() AS get_teams_for_authenticated_user))`,
     }),
   ],
 );
@@ -763,6 +951,9 @@ export const invoices = pgTable(
       withTimezone: true,
       mode: "string",
     }),
+    // Recurring invoice fields
+    invoiceRecurringId: uuid("invoice_recurring_id"),
+    recurringSequence: integer("recurring_sequence"), // Which number in the series (1, 2, 3...)
   },
   (table) => [
     index("invoices_created_at_idx").using(
@@ -780,6 +971,13 @@ export const invoices = pgTable(
     index("invoices_template_id_idx").using(
       "btree",
       table.templateId.asc().nullsLast().op("uuid_ops"),
+    ),
+    // Composite indexes for insights activity queries
+    index("invoices_team_sent_at_idx").on(table.teamId, table.sentAt),
+    index("invoices_team_status_paid_at_idx").on(
+      table.teamId,
+      table.status,
+      table.paidAt,
     ),
     foreignKey({
       columns: [table.userId],
@@ -801,7 +999,36 @@ export const invoices = pgTable(
       foreignColumns: [invoiceTemplates.id],
       name: "invoices_template_id_fkey",
     }).onDelete("set null"),
+    foreignKey({
+      columns: [table.invoiceRecurringId],
+      foreignColumns: [invoiceRecurring.id],
+      name: "invoices_invoice_recurring_id_fkey",
+    }).onDelete("set null"),
+    index("invoices_invoice_recurring_id_idx").using(
+      "btree",
+      table.invoiceRecurringId.asc().nullsLast().op("uuid_ops"),
+    ),
+    // Unique constraint for idempotency (prevents duplicate invoices for same sequence)
+    uniqueIndex("invoices_recurring_sequence_unique_idx")
+      .on(table.invoiceRecurringId, table.recurringSequence)
+      .where(sql`invoice_recurring_id IS NOT NULL`),
     unique("invoices_scheduled_job_id_key").on(table.scheduledJobId),
+    // Invoice page query indexes
+    index("invoices_team_due_date_idx")
+      .on(table.teamId, table.dueDate.desc())
+      .where(sql`due_date IS NOT NULL`),
+    index("invoices_team_status_due_date_idx").on(
+      table.teamId,
+      table.status,
+      table.dueDate.desc(),
+    ),
+    index("invoices_team_customer_id_idx")
+      .on(table.teamId, table.customerId)
+      .where(sql`customer_id IS NOT NULL`),
+    index("invoices_customer_id_idx")
+      .on(table.customerId)
+      .where(sql`customer_id IS NOT NULL`),
+    index("invoices_team_created_at_idx").on(table.teamId, table.createdAt),
     pgPolicy("Invoices can be handled by a member of the team", {
       as: "permissive",
       for: "all",
@@ -835,6 +1062,48 @@ export const customers = pgTable(
     countryCode: text("country_code"),
     token: text().default("").notNull(),
     contact: text(),
+
+    // Customer relationship fields
+    status: text().default("active"), // active, inactive, prospect, churned
+    preferredCurrency: text("preferred_currency"),
+    defaultPaymentTerms: integer("default_payment_terms"), // days (30, 60, etc.)
+    isArchived: boolean("is_archived").default(false),
+    source: text().default("manual"), // manual, import, quickbooks, xero, etc.
+    externalId: text("external_id"), // for external system sync
+
+    // Enrichment fields (from Gemini + Google Search grounding)
+    logoUrl: text("logo_url"),
+    description: text(), // AI-generated company description
+    industry: text(), // Software, Healthcare, Finance, etc.
+    companyType: text("company_type"), // B2B, B2C, SaaS, Agency, etc.
+    employeeCount: text("employee_count"), // 1-10, 11-50, 51-200, etc.
+    foundedYear: integer("founded_year"),
+    estimatedRevenue: text("estimated_revenue"), // <$1M, $1-10M, etc.
+    fundingStage: text("funding_stage"), // Bootstrapped, Seed, Series A, etc.
+    totalFunding: text("total_funding"), // e.g., "$25M"
+    headquartersLocation: text("headquarters_location"), // City, Country
+    timezone: text(), // IANA timezone
+    linkedinUrl: text("linkedin_url"),
+    twitterUrl: text("twitter_url"),
+    instagramUrl: text("instagram_url"),
+    facebookUrl: text("facebook_url"),
+    ceoName: text("ceo_name"), // CEO or founder name
+    financeContact: text("finance_contact"), // Finance/AP contact name for invoicing
+    financeContactEmail: text("finance_contact_email"), // Finance/AP contact email
+    primaryLanguage: text("primary_language"), // Primary business language (e.g., "en", "sv", "de")
+    fiscalYearEnd: text("fiscal_year_end"), // Fiscal year end month (e.g., "December", "March")
+
+    // Enrichment metadata
+    enrichmentStatus: text("enrichment_status"), // null = not attempted, pending, processing, completed, failed
+    enrichedAt: timestamp("enriched_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+
+    // Portal fields
+    portalEnabled: boolean("portal_enabled").default(false),
+    portalId: text("portal_id"),
+
     fts: tsvector("fts")
       .notNull()
       .generatedAlwaysAs(
@@ -860,6 +1129,14 @@ export const customers = pgTable(
       "gin",
       table.fts.asc().nullsLast().op("tsvector_ops"),
     ),
+    index("idx_customers_status").on(table.status),
+    index("idx_customers_is_archived").on(table.isArchived),
+    index("idx_customers_enrichment_status").on(table.enrichmentStatus),
+    index("idx_customers_website").on(table.website),
+    index("idx_customers_industry").on(table.industry),
+    // Team and date indexes for insights activity queries
+    index("customers_team_id_idx").on(table.teamId),
+    index("customers_team_created_at_idx").on(table.teamId, table.createdAt),
     foreignKey({
       columns: [table.teamId],
       foreignColumns: [teams.id],
@@ -1082,6 +1359,36 @@ export const reports = pgTable(
       for: "update",
       to: ["public"],
     }),
+  ],
+);
+
+export const institutions = pgTable(
+  "institutions",
+  {
+    id: text().primaryKey().notNull(),
+    name: text().notNull(),
+    logo: text(),
+    provider: bankProvidersEnum().notNull(),
+    countries: text().array().notNull(),
+    availableHistory: integer("available_history"),
+    maximumConsentValidity: integer("maximum_consent_validity"),
+    popularity: integer().default(0).notNull(),
+    type: text(),
+    status: institutionStatusEnum().default("active").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("institutions_country_idx").using("gin", table.countries),
+    index("institutions_name_trgm_idx").using(
+      "gin",
+      sql`${table.name} gin_trgm_ops`,
+    ),
+    index("institutions_status_idx").on(table.status),
   ],
 );
 
@@ -1625,6 +1932,11 @@ export const invoiceTemplates = pgTable(
     includeLineItemTax: boolean("include_line_item_tax").default(false),
     lineItemTaxLabel: text("line_item_tax_label"),
     paymentEnabled: boolean("payment_enabled").default(false),
+    paymentTermsDays: integer("payment_terms_days").default(30),
+    emailSubject: text("email_subject"),
+    emailHeading: text("email_heading"),
+    emailBody: text("email_body"),
+    emailButtonText: text("email_button_text"),
   },
   (table) => [
     foreignKey({
@@ -1981,6 +2293,12 @@ export const inbox = pgTable(
     index("inbox_grouped_inbox_id_idx").using(
       "btree",
       table.groupedInboxId.asc().nullsLast().op("uuid_ops"),
+    ),
+    // Composite index for insights activity queries
+    index("inbox_team_status_created_at_idx").on(
+      table.teamId,
+      table.status,
+      table.createdAt,
     ),
     foreignKey({
       columns: [table.attachmentId],
@@ -3031,7 +3349,34 @@ export const invoicesRelations = relations(invoices, ({ one }) => ({
     fields: [invoices.teamId],
     references: [teams.id],
   }),
+  invoiceRecurring: one(invoiceRecurring, {
+    fields: [invoices.invoiceRecurringId],
+    references: [invoiceRecurring.id],
+  }),
 }));
+
+export const invoiceRecurringRelations = relations(
+  invoiceRecurring,
+  ({ one, many }) => ({
+    team: one(teams, {
+      fields: [invoiceRecurring.teamId],
+      references: [teams.id],
+    }),
+    user: one(users, {
+      fields: [invoiceRecurring.userId],
+      references: [users.id],
+    }),
+    customer: one(customers, {
+      fields: [invoiceRecurring.customerId],
+      references: [customers.id],
+    }),
+    invoiceTemplate: one(invoiceTemplates, {
+      fields: [invoiceRecurring.templateId],
+      references: [invoiceTemplates.id],
+    }),
+    invoices: many(invoices),
+  }),
+);
 
 export const trackerReportsRelations = relations(trackerReports, ({ one }) => ({
   user: one(users, {
@@ -3485,6 +3830,232 @@ export const accountingSyncRecordsRelations = relations(
     team: one(teams, {
       fields: [accountingSyncRecords.teamId],
       references: [teams.id],
+    }),
+  }),
+);
+
+// ============================================================================
+// INSIGHTS - AI-generated business insights (weekly, monthly, quarterly, yearly)
+// ============================================================================
+
+// Type definitions for JSONB columns
+export type InsightMetric = {
+  type: string;
+  label: string;
+  value: number;
+  previousValue: number;
+  change: number; // percentage
+  changeDirection: "up" | "down" | "flat";
+  unit?: string;
+  historicalContext?: string; // "Highest since October"
+};
+
+export type InsightAnomaly = {
+  type: string;
+  severity: "info" | "warning" | "alert";
+  message: string;
+  metricType?: string;
+};
+
+export type ExpenseAnomaly = {
+  type: "category_spike" | "new_category" | "category_decrease";
+  severity: "info" | "warning" | "alert";
+  categoryName: string;
+  categorySlug: string;
+  currentAmount: number;
+  previousAmount: number;
+  change: number; // percentage change
+  currency: string;
+  message: string;
+  tip?: string; // actionable tip for the user
+};
+
+export type InsightMilestone = {
+  type: string;
+  description: string;
+  achievedAt: string;
+};
+
+export type InsightActivity = {
+  invoicesSent: number;
+  invoicesPaid: number;
+  invoicesOverdue: number;
+  overdueAmount?: number;
+  hoursTracked: number;
+  largestPayment?: { customer: string; amount: number };
+  newCustomers: number;
+  receiptsMatched: number;
+  transactionsCategorized: number;
+  // Upcoming scheduled/recurring invoices
+  upcomingInvoices?: {
+    count: number;
+    totalAmount: number;
+    nextDueDate?: string;
+    items?: Array<{
+      customerName: string;
+      amount: number;
+      scheduledAt: string;
+      frequency?: string;
+    }>;
+  };
+};
+
+// Forward-looking predictions stored for follow-through in next insight
+export type InsightPredictions = {
+  // Invoices due next week
+  invoicesDue?: {
+    count: number;
+    totalAmount: number;
+    currency: string;
+  };
+  // Current streak info to track if maintained
+  streakAtRisk?: {
+    type: string;
+    count: number;
+  };
+  // Any other forward-looking items
+  notes?: string[];
+};
+
+export type InsightContent = {
+  title: string;
+  summary: string;
+  story: string;
+  actions: Array<{
+    text: string;
+    type?: string;
+    entityType?: "invoice" | "project" | "customer" | "transaction";
+    entityId?: string;
+  }>;
+};
+
+export const insights = pgTable(
+  "insights",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+
+    // Flexible period definition
+    periodType: insightPeriodTypeEnum("period_type").notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    periodYear: smallint("period_year").notNull(),
+    periodNumber: smallint("period_number").notNull(), // Week 1-53, Month 1-12, Quarter 1-4
+
+    status: insightStatusEnum().default("pending").notNull(),
+
+    // Selected 4 key metrics (dynamically chosen)
+    selectedMetrics: jsonb("selected_metrics").$type<InsightMetric[]>(),
+
+    // Full metrics snapshot (for drill-down)
+    allMetrics: jsonb("all_metrics").$type<Record<string, InsightMetric>>(),
+
+    // Detected anomalies and patterns
+    anomalies: jsonb().$type<InsightAnomaly[]>(),
+
+    // Expense category anomalies (spikes, new categories, etc.)
+    expenseAnomalies: jsonb("expense_anomalies").$type<ExpenseAnomaly[]>(),
+
+    // Streaks and milestones
+    milestones: jsonb().$type<InsightMilestone[]>(),
+
+    // Activity context
+    activity: jsonb().$type<InsightActivity>(),
+
+    currency: varchar({ length: 3 }).notNull(),
+
+    // AI-generated title (for card headers and email subjects)
+    title: text(),
+
+    // AI-generated content (relief-first structure)
+    content: jsonb().$type<InsightContent>(),
+
+    // Forward-looking predictions for follow-through tracking
+    predictions: jsonb().$type<InsightPredictions>(),
+
+    // Audio narration storage path: {teamId}/insights/{insightId}.mp3
+    audioPath: text("audio_path"),
+
+    generatedAt: timestamp("generated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("insights_team_period_unique").on(
+      table.teamId,
+      table.periodType,
+      table.periodYear,
+      table.periodNumber,
+    ),
+    index("insights_team_id_idx").on(table.teamId),
+    index("insights_team_period_type_idx").on(
+      table.teamId,
+      table.periodType,
+      table.generatedAt.desc(),
+    ),
+    pgPolicy("Team members can view their insights", {
+      as: "permissive",
+      for: "select",
+      to: ["public"],
+    }),
+  ],
+);
+
+export const insightsRelations = relations(insights, ({ one, many }) => ({
+  team: one(teams, {
+    fields: [insights.teamId],
+    references: [teams.id],
+  }),
+  userStatuses: many(insightUserStatus),
+}));
+
+// Per-user insight interaction tracking (read/dismiss state)
+export const insightUserStatus = pgTable(
+  "insight_user_status",
+  {
+    insightId: uuid("insight_id")
+      .notNull()
+      .references(() => insights.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.insightId, table.userId] }),
+    index("insight_user_status_user_idx").on(table.userId),
+    index("insight_user_status_insight_idx").on(table.insightId),
+    pgPolicy("Users can manage their own insight status", {
+      as: "permissive",
+      for: "all",
+      to: ["public"],
+    }),
+  ],
+);
+
+export const insightUserStatusRelations = relations(
+  insightUserStatus,
+  ({ one }) => ({
+    insight: one(insights, {
+      fields: [insightUserStatus.insightId],
+      references: [insights.id],
+    }),
+    user: one(users, {
+      fields: [insightUserStatus.userId],
+      references: [users.id],
     }),
   }),
 );

@@ -1,12 +1,13 @@
 import { createLoggerWithContext } from "@midday/logger";
+import * as Sentry from "@sentry/bun";
 import type { Job } from "bullmq";
 import type { ZodSchema } from "zod";
 import {
-  NonRetryableError,
   classifyError,
   getMaxRetries,
   getRetryDelay,
   isNonRetryableError,
+  NonRetryableError,
 } from "../utils/error-classification";
 
 /**
@@ -113,7 +114,7 @@ export abstract class BaseProcessor<TData = unknown> {
           hasResult: result !== undefined,
           resultType: typeof result,
         });
-      } catch (logError) {
+      } catch (_logError) {
         // Silently ignore logger errors - job already completed successfully
         // This prevents stream encoding errors from affecting job completion
       }
@@ -181,6 +182,27 @@ export abstract class BaseProcessor<TData = unknown> {
         stack: errorStack,
       });
 
+      // Only send to Sentry on final attempt or non-retryable errors
+      // Avoids noise from retryable failures that will succeed on retry
+      if (!shouldRetry || remainingAttempts <= 0) {
+        Sentry.captureException(error, {
+          tags: {
+            jobName: job.name,
+            errorCategory: classified.category,
+            retryable: String(shouldRetry),
+            finalAttempt: String(remainingAttempts <= 0),
+          },
+          extra: {
+            jobId: job.id,
+            attempt: job.attemptsMade + 1,
+            maxAttempts: job.opts.attempts,
+            remainingAttempts,
+            duration: `${duration}ms`,
+            payload: JSON.stringify(job.data),
+          },
+        });
+      }
+
       // For non-retryable errors, remove the job from retry queue
       // This prevents unnecessary retries and reduces Redis storage
       if (isNonRetryable && remainingAttempts > 0) {
@@ -232,6 +254,7 @@ export abstract class BaseProcessor<TData = unknown> {
     job: Job<TData>,
     progress: number,
     message?: string,
+    step?: string,
   ): Promise<void> {
     // Clamp progress to 0-100
     const clampedProgress = Math.max(0, Math.min(100, progress));
@@ -240,11 +263,16 @@ export abstract class BaseProcessor<TData = unknown> {
       // Check if updateProgress method exists and is callable
       // Some job types or BullMQ versions may not have this method
       if (job.updateProgress && typeof job.updateProgress === "function") {
-        await job.updateProgress(clampedProgress);
+        await job.updateProgress({
+          progress: clampedProgress,
+          message,
+          step,
+        });
         this.logger.debug("Progress updated", {
           jobId: job.id,
           progress: `${clampedProgress}%`,
           message,
+          step,
         });
       } else {
         // Silently skip if updateProgress is not available
@@ -252,6 +280,7 @@ export abstract class BaseProcessor<TData = unknown> {
           jobId: job.id,
           progress: `${clampedProgress}%`,
           message,
+          step,
         });
       }
     } catch (error) {
@@ -284,7 +313,7 @@ export abstract class BaseProcessor<TData = unknown> {
    * @param job - The BullMQ job
    * @returns true if job should be processed, false if it should be skipped
    */
-  protected async shouldProcess(job: Job<TData>): Promise<boolean> {
+  protected async shouldProcess(_job: Job<TData>): Promise<boolean> {
     // Default: always process
     // Subclasses can override to implement idempotency checks
     return true;

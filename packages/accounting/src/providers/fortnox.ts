@@ -1,4 +1,5 @@
 import { logger } from "@midday/logger";
+import { parseISO } from "date-fns";
 import { BaseAccountingProvider } from "../provider";
 import {
   ACCOUNTING_ERROR_CODES,
@@ -734,7 +735,7 @@ export class FortnoxProvider extends BaseAccountingProvider {
     // Fortnox assigns voucher numbers in creation order, so sorting by date
     // ensures numbers roughly follow chronological order (better for auditing)
     const sortedTransactions = [...transactions].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+      (a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime(),
     );
 
     logger.info("Starting Fortnox transaction sync", {
@@ -834,11 +835,11 @@ export class FortnoxProvider extends BaseAccountingProvider {
       return false;
     }
 
-    const checkDate = new Date(date);
+    const checkDate = parseISO(date);
     return this.financialYearsCache.some((year) => {
       if (!year.FromDate || !year.ToDate) return false;
-      const fromDate = new Date(year.FromDate);
-      const toDate = new Date(year.ToDate);
+      const fromDate = parseISO(year.FromDate);
+      const toDate = parseISO(year.ToDate);
       return checkDate >= fromDate && checkDate <= toDate;
     });
   }
@@ -901,9 +902,9 @@ export class FortnoxProvider extends BaseAccountingProvider {
     let toDay = 31;
 
     if (existingYears.length > 0 && existingYears[0]?.FromDate) {
-      const existingFrom = new Date(existingYears[0].FromDate);
+      const existingFrom = parseISO(existingYears[0].FromDate);
       const existingTo = existingYears[0].ToDate
-        ? new Date(existingYears[0].ToDate)
+        ? parseISO(existingYears[0].ToDate)
         : null;
 
       fromMonth = existingFrom.getMonth() + 1;
@@ -992,7 +993,7 @@ export class FortnoxProvider extends BaseAccountingProvider {
       return;
     }
 
-    const targetYear = new Date(date).getFullYear();
+    const targetYear = parseISO(date).getFullYear();
     logger.info("Financial year not found, will create it", {
       provider: "fortnox",
       date,
@@ -1117,12 +1118,12 @@ export class FortnoxProvider extends BaseAccountingProvider {
         ? [
             // Expense: Debit expense account, Credit bank account
             {
-              Account: Number.parseInt(contraAccount),
+              Account: Number.parseInt(contraAccount, 10),
               Debit: amount,
               Credit: 0,
             },
             {
-              Account: Number.parseInt(bankAccountCode),
+              Account: Number.parseInt(bankAccountCode, 10),
               Debit: 0,
               Credit: amount,
             },
@@ -1130,12 +1131,12 @@ export class FortnoxProvider extends BaseAccountingProvider {
         : [
             // Income: Debit bank account, Credit income account
             {
-              Account: Number.parseInt(bankAccountCode),
+              Account: Number.parseInt(bankAccountCode, 10),
               Debit: amount,
               Credit: 0,
             },
             {
-              Account: Number.parseInt(contraAccount),
+              Account: Number.parseInt(contraAccount, 10),
               Debit: 0,
               Credit: amount,
             },

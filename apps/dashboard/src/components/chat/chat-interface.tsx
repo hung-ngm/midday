@@ -1,18 +1,19 @@
 "use client";
 
-import { Portal } from "@/components/portal";
-import { useChatInterface } from "@/hooks/use-chat-interface";
-import { useChatStatus } from "@/hooks/use-chat-status";
 import { useChat, useChatActions, useDataPart } from "@ai-sdk-tools/store";
 import type { UIChatMessage } from "@midday/api/ai/types";
 import { createClient } from "@midday/supabase/client";
 import { cn } from "@midday/ui/cn";
 import { Conversation, ConversationContent } from "@midday/ui/conversation";
-import type { Geo } from "@vercel/functions";
 import { DefaultChatTransport, generateId } from "ai";
 import dynamic from "next/dynamic";
 import { parseAsString, useQueryState } from "nuqs";
 import { useEffect, useMemo, useRef } from "react";
+import { Portal } from "@/components/portal";
+import { useChatInterface } from "@/hooks/use-chat-interface";
+import { useChatStatus } from "@/hooks/use-chat-status";
+import { useMetricsFilter } from "@/hooks/use-metrics-filter";
+import type { Geo } from "@/utils/geo";
 import {
   ChatHeader,
   ChatInput,
@@ -40,6 +41,9 @@ export function ChatInterface({ geo }: Props) {
   const [, clearSuggestions] = useDataPart<{ prompts: string[] }>(
     "suggestions",
   );
+
+  // Get current dashboard metrics filter state (source of truth for AI tool defaults)
+  const { period, from, to, currency, revenueType } = useMetricsFilter();
 
   // Reset chat state when navigating away from a chat (sidebar, browser back, etc.)
   useEffect(() => {
@@ -99,6 +103,8 @@ export function ChatInterface({ geo }: Props) {
             agentChoice,
             toolChoice,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            // Dashboard metrics filter state - source of truth for AI tool defaults
+            metricsFilter: { period, from, to, currency, revenueType },
           },
         };
       },
@@ -113,6 +119,7 @@ export function ChatInterface({ geo }: Props) {
     currentSection,
     bankAccountRequired,
     hasTextContent,
+    hasInsightData,
   } = useChatStatus(messages, status);
 
   const [selectedType] = useQueryState("artifact-type", parseAsString);
@@ -183,6 +190,7 @@ export function ChatInterface({ geo }: Props) {
                       currentSection={currentSection}
                       bankAccountRequired={bankAccountRequired}
                       hasTextContent={hasTextContent}
+                      hasInsightData={hasInsightData}
                     />
                   </div>
                 </ConversationContent>

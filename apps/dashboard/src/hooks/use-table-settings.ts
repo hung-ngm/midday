@@ -1,22 +1,24 @@
 "use client";
 
-import { updateTableSettingsAction } from "@/actions/update-table-settings-action";
-import {
-  TABLE_SETTINGS_COOKIE,
-  type TableId,
-  type TableSettings,
-  mergeWithDefaults,
-} from "@/utils/table-settings";
 import type {
   ColumnOrderState,
   ColumnSizingState,
   VisibilityState,
 } from "@tanstack/react-table";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { updateTableSettingsAction } from "@/actions/update-table-settings-action";
+import {
+  mergeWithDefaults,
+  normalizeColumnOrder,
+  TABLE_SETTINGS_COOKIE,
+  type TableId,
+  type TableSettings,
+} from "@/utils/table-settings";
 
 interface UseTableSettingsProps {
   tableId: TableId;
   initialSettings?: Partial<TableSettings>;
+  columnIds?: string[];
 }
 
 interface UseTableSettingsReturn {
@@ -35,6 +37,7 @@ interface UseTableSettingsReturn {
 export function useTableSettings({
   tableId,
   initialSettings,
+  columnIds,
 }: UseTableSettingsProps): UseTableSettingsReturn {
   // Merge initial settings with defaults
   const settings = mergeWithDefaults(initialSettings, tableId);
@@ -46,7 +49,9 @@ export function useTableSettings({
     settings.sizing,
   );
   const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(
-    settings.order,
+    columnIds
+      ? normalizeColumnOrder(settings.order, columnIds)
+      : settings.order,
   );
 
   // Track initial mount to skip first persist

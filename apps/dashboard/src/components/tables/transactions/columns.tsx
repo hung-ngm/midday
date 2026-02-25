@@ -1,12 +1,5 @@
 "use client";
 
-import { FormatAmount } from "@/components/format-amount";
-import { InlineAssignUser } from "@/components/inline-assign-user";
-import { InlineSelectCategory } from "@/components/inline-select-category";
-import { InlineSelectTags } from "@/components/inline-select-tags";
-import { TransactionBankAccount } from "@/components/transaction-bank-account";
-import { TransactionMethod } from "@/components/transaction-method";
-import { TransactionStatus } from "@/components/transaction-status";
 import type { RouterOutputs } from "@api/trpc/routers/_app";
 import { Badge } from "@midday/ui/badge";
 import { Button } from "@midday/ui/button";
@@ -23,8 +16,16 @@ import { Icons } from "@midday/ui/icons";
 import { Spinner } from "@midday/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@midday/ui/tooltip";
 import { formatDate } from "@midday/utils/format";
+import { calculateBaseTaxAmount } from "@midday/utils/tax";
 import type { ColumnDef } from "@tanstack/react-table";
 import { memo, useCallback } from "react";
+import { FormatAmount } from "@/components/format-amount";
+import { InlineAssignUser } from "@/components/inline-assign-user";
+import { InlineSelectCategory } from "@/components/inline-select-category";
+import { InlineSelectTags } from "@/components/inline-select-tags";
+import { TransactionBankAccount } from "@/components/transaction-bank-account";
+import { TransactionMethod } from "@/components/transaction-method";
+import { TransactionStatus } from "@/components/transaction-status";
 
 type Transaction = RouterOutputs["transactions"]["get"]["data"][number];
 
@@ -55,12 +56,8 @@ const SelectCell = memo(
 SelectCell.displayName = "SelectCell";
 
 const DateCell = memo(
-  ({
-    date,
-    format,
-    noSort,
-  }: { date: string; format?: string | null; noSort?: boolean }) =>
-    formatDate(date, format, noSort),
+  ({ date, format }: { date: string; format?: string | null }) =>
+    formatDate(date, format),
 );
 
 DateCell.displayName = "DateCell";
@@ -112,13 +109,7 @@ const DescriptionCell = memo(
 DescriptionCell.displayName = "DescriptionCell";
 
 const AmountCell = memo(
-  ({
-    amount,
-    currency,
-  }: {
-    amount: number;
-    currency: string;
-  }) => (
+  ({ amount, currency }: { amount: number; currency: string }) => (
     <span className={cn("text-sm", amount > 0 && "text-[#00C969]")}>
       <FormatAmount amount={amount} currency={currency} />
     </span>
@@ -346,7 +337,6 @@ export const columns: ColumnDef<Transaction>[] = [
       <DateCell
         date={row.original.date}
         format={table.options.meta?.dateFormat}
-        noSort={!table.options.meta?.hasSorting}
       />
     ),
   },
@@ -404,13 +394,118 @@ export const columns: ColumnDef<Transaction>[] = [
       headerLabel: "Tax Amount",
       className: "w-[170px] min-w-[100px]",
     },
-    cell: ({ row }) => (
-      <FormatAmount
-        amount={row.original.taxAmount ?? 0}
-        currency={row.original.currency}
-        maximumFractionDigits={2}
-      />
-    ),
+    cell: ({ row }) => {
+      const { taxAmount, currency } = row.original;
+
+      if (taxAmount == null) {
+        return <span className="text-muted-foreground">-</span>;
+      }
+
+      return (
+        <FormatAmount
+          amount={taxAmount}
+          currency={currency}
+          maximumFractionDigits={2}
+        />
+      );
+    },
+  },
+  {
+    accessorKey: "baseAmount",
+    header: "Base Amount",
+    size: 170,
+    minSize: 100,
+    maxSize: 400,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "text", width: "w-20" },
+      headerLabel: "Base Amount",
+      className: "w-[170px] min-w-[100px]",
+    },
+    cell: ({ row }) => {
+      const { baseAmount, baseCurrency, currency } = row.original;
+
+      if (baseAmount == null || !baseCurrency || baseCurrency === currency) {
+        return <span className="text-muted-foreground">-</span>;
+      }
+
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className={cn("text-sm", baseAmount > 0 && "text-[#00C969]")}>
+              <FormatAmount amount={baseAmount} currency={baseCurrency} />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent
+            className="px-3 py-1.5 text-xs max-w-[280px]"
+            side="top"
+            sideOffset={5}
+          >
+            Approximate amount converted to your base currency.
+          </TooltipContent>
+        </Tooltip>
+      );
+    },
+  },
+  {
+    accessorKey: "baseTaxAmount",
+    header: "Base Tax Amount",
+    size: 170,
+    minSize: 100,
+    maxSize: 400,
+    enableResizing: true,
+    meta: {
+      skeleton: { type: "text", width: "w-20" },
+      headerLabel: "Base Tax Amount",
+      className: "w-[170px] min-w-[100px]",
+    },
+    cell: ({ row }) => {
+      const { taxAmount, taxRate, amount, baseAmount, baseCurrency, currency } =
+        row.original;
+
+      if (
+        baseAmount == null ||
+        !baseCurrency ||
+        baseCurrency === currency ||
+        taxAmount == null
+      ) {
+        return <span className="text-muted-foreground">-</span>;
+      }
+
+      const baseTax = calculateBaseTaxAmount({
+        amount,
+        taxAmount,
+        taxRate,
+        baseAmount,
+        baseCurrency,
+        currency,
+      });
+
+      if (baseTax == null) {
+        return <span className="text-muted-foreground">-</span>;
+      }
+
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <FormatAmount
+                amount={baseTax}
+                currency={baseCurrency}
+                maximumFractionDigits={2}
+              />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent
+            className="px-3 py-1.5 text-xs max-w-[280px]"
+            side="top"
+            sideOffset={5}
+          >
+            Approximate tax amount converted to your base currency.
+          </TooltipContent>
+        </Tooltip>
+      );
+    },
   },
   {
     accessorKey: "category",

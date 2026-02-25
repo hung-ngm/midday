@@ -1,10 +1,10 @@
 "use client";
 
-import { useInvoiceStore } from "@/store/invoice";
 import { Button } from "@midday/ui/button";
 import { Checkbox } from "@midday/ui/checkbox";
 import { Icons } from "@midday/ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "@midday/ui/popover";
+import { useInvoiceStore } from "@/store/invoice";
 
 export function InvoiceColumnVisibility() {
   const { columns } = useInvoiceStore();
@@ -18,7 +18,7 @@ export function InvoiceColumnVisibility() {
       </PopoverTrigger>
 
       <PopoverContent className="w-[200px] p-0" align="end" sideOffset={8}>
-        <div className="flex flex-col p-4 space-y-2 h-[410px]">
+        <div className="flex flex-col p-4 space-y-2 max-h-[450px] overflow-auto">
           {columns
             .filter(
               (column) =>

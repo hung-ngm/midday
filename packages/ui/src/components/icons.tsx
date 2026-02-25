@@ -1,5 +1,4 @@
 import { ArchiveIcon } from "@radix-ui/react-icons";
-import { FaXTwitter } from "react-icons/fa6";
 import { FiGithub } from "react-icons/fi";
 import type { IconType as BaseIconType } from "react-icons/lib";
 import {
@@ -46,6 +45,7 @@ import {
   MdOutlineConfirmationNumber,
   MdOutlineContentCopy,
   MdOutlineCropFree,
+  MdOutlineDarkMode,
   MdOutlineDashboardCustomize,
   MdOutlineEditNote,
   MdOutlineEmail,
@@ -53,13 +53,16 @@ import {
   MdOutlineFace,
   MdOutlineFactCheck,
   MdOutlineFilterList,
+  MdOutlineForwardToInbox,
   MdOutlineGraphicEq,
   MdOutlineGridView,
   MdOutlineHistory,
   MdOutlineInfo,
+  MdOutlineInsights,
   MdOutlineInventory2,
   MdOutlineLanguage,
   MdOutlineLaunch,
+  MdOutlineLightMode,
   MdOutlineLink,
   MdOutlineListAlt,
   MdOutlineMoreTime,
@@ -212,19 +215,19 @@ export const Icons = {
       <g clipPath="url(#a)">
         <path
           d="M10 3.958c1.475 0 2.796.509 3.838 1.5l2.854-2.854C14.959.992 12.696 0 10 0a9.995 9.995 0 0 0-8.933 5.508l3.325 2.58c.787-2.371 3-4.13 5.608-4.13Z"
-          fill="#585858"
+          fill="#EA4335"
         />
         <path
           d="M19.575 10.23c0-.655-.063-1.288-.158-1.897H10v3.759h5.392a4.648 4.648 0 0 1-1.992 2.991l3.22 2.5c1.88-1.741 2.955-4.316 2.955-7.354Z"
-          fill="#878787"
+          fill="#4285F4"
         />
         <path
           d="M4.388 11.912A6.075 6.075 0 0 1 4.07 10c0-.667.112-1.308.317-1.913L1.063 5.508A9.964 9.964 0 0 0 0 10c0 1.617.383 3.142 1.067 4.492l3.32-2.58Z"
-          fill="#D7D7D7"
+          fill="#FBBC05"
         />
         <path
           d="M10 20c2.7 0 4.97-.887 6.62-2.42l-3.22-2.5c-.896.603-2.05.958-3.4.958-2.608 0-4.82-1.759-5.612-4.13l-3.325 2.58C2.712 17.758 6.091 20 10 20Z"
-          fill="#B3B3B3"
+          fill="#34A853"
         />
       </g>
       <defs>
@@ -232,6 +235,14 @@ export const Icons = {
           <path fill="currentColor" d="M0 0h20v20H0z" />
         </clipPath>
       </defs>
+    </SVGIcon>
+  ),
+  Microsoft: (props: SVGIconProps) => (
+    <SVGIcon {...props} viewBox="0 0 21 21" fill="none" strokeWidth={0}>
+      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
     </SVGIcon>
   ),
   InboxCustomize: (props: any) => (
@@ -300,6 +311,7 @@ export const Icons = {
       xmlns="http://www.w3.org/2000/svg"
       width={16}
       height={17}
+      viewBox="0 0 16 17"
       fill="none"
       {...props}
     >
@@ -590,7 +602,11 @@ export const Icons = {
   Overview: MdOutlineWidgets,
   Inbox: ArchiveIcon,
   Close: MdClose,
-  X: FaXTwitter,
+  X: (props: SVGIconProps) => (
+    <SVGIcon {...props} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </SVGIcon>
+  ),
   Discord: PiDiscordLogo,
   PdfOutline: MdOutlinePictureAsPdf,
   Amount: MdOutlineEqualizer,
@@ -621,6 +637,7 @@ export const Icons = {
   Error: MdErrorOutline,
   AI: MdAutoAwesome,
   AIOutline: MdOutlineAutoAwesome,
+  Insights: MdOutlineInsights,
   Time: MdOutlineMoreTime,
   Add: MdOutlineAdd,
   Copy: MdOutlineContentCopy,
@@ -672,6 +689,7 @@ export const Icons = {
   SubdirectoryArrowLeft: MdOutlineSubdirectoryArrowLeft,
   OutgoingMail: MdOutlineSignpost,
   AttachEmail: MdOutlineAttachEmail,
+  ForwardToInbox: MdOutlineForwardToInbox,
   SyncAlt: MdOutlineSyncAlt,
   InfoOutline: MdOutlineInfo,
   DashboardCustomize: MdOutlineDashboardCustomize,
@@ -691,9 +709,68 @@ export const Icons = {
   ArrowDropDown: MdArrowDropDown,
   Block: MdOutlineBlock,
   ListAlt: MdOutlineListAlt,
+  LightMode: MdOutlineLightMode,
+  DarkMode: MdOutlineDarkMode,
   WhatsApp: (props: SVGIconProps) => (
     <SVGIcon {...props} viewBox="0 0 24 24">
       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+    </SVGIcon>
+  ),
+  LinkedIn: (props: SVGIconProps) => (
+    <SVGIcon {...props} viewBox="0 0 72 72">
+      <rect width="72" height="72" rx="8" fill="#0077B7" />
+      <path
+        fill="#fff"
+        d="M20.5 29h8v28.5h-8zM24.5 17c2.7 0 4.9 2.2 4.9 4.9s-2.2 4.9-4.9 4.9-4.9-2.2-4.9-4.9 2.2-4.9 4.9-4.9M33.5 29h7.7v3.9h.1c1.1-2 3.7-4.1 7.6-4.1 8.1 0 9.6 5.3 9.6 12.3v14.4h-8V43.2c0-3.4-.1-7.8-4.8-7.8-4.8 0-5.5 3.7-5.5 7.6v14.5h-8V29z"
+      />
+    </SVGIcon>
+  ),
+  Instagram: (props: SVGIconProps) => (
+    <SVGIcon {...props} viewBox="0 0 24 24">
+      <defs>
+        <linearGradient
+          id="instagram-gradient"
+          x1="0%"
+          y1="100%"
+          x2="100%"
+          y2="0%"
+        >
+          <stop offset="0%" stopColor="#FEDA77" />
+          <stop offset="25%" stopColor="#FA7E1E" />
+          <stop offset="50%" stopColor="#D62976" />
+          <stop offset="75%" stopColor="#962FBF" />
+          <stop offset="100%" stopColor="#4F5BD5" />
+        </linearGradient>
+      </defs>
+      <rect width="24" height="24" rx="6" fill="url(#instagram-gradient)" />
+      <rect
+        x="4"
+        y="4"
+        width="16"
+        height="16"
+        rx="4"
+        stroke="#fff"
+        strokeWidth="2"
+        fill="none"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        r="3.5"
+        stroke="#fff"
+        strokeWidth="2"
+        fill="none"
+      />
+      <circle cx="17" cy="7" r="1.5" fill="#fff" />
+    </SVGIcon>
+  ),
+  Facebook: (props: SVGIconProps) => (
+    <SVGIcon {...props} viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="12" fill="#1877F2" />
+      <path
+        fill="#fff"
+        d="M16.671 15.469l.547-3.469h-3.343v-2.25c0-.949.478-1.875 2.016-1.875h1.559V5.156S16.045 5 14.703 5c-2.804 0-4.637 1.653-4.637 4.641V12H7.078v3.469h2.988v8.385a12.158 12.158 0 003.672 0v-8.385h2.933z"
+      />
     </SVGIcon>
   ),
   Xero: ({ className }: { className?: string }) => (

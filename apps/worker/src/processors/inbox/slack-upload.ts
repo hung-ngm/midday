@@ -16,7 +16,7 @@ import { createClient } from "@midday/supabase/job";
 import { getExtensionFromMimeType } from "@midday/utils";
 import { generateText } from "ai";
 import type { Job } from "bullmq";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import type { SlackUploadPayload } from "../../schemas/inbox";
 import { getDb } from "../../utils/db";
 import { TIMEOUTS, withTimeout } from "../../utils/timeout";
@@ -254,6 +254,54 @@ export class SlackUploadProcessor extends BaseProcessor<SlackUploadPayload> {
         `Document processing timed out after ${TIMEOUTS.DOCUMENT_PROCESSING}ms`,
       );
 
+      // Check if document is classified as "other" (non-financial document)
+      if (result.document_type === "other") {
+        await updateInboxWithProcessedData(db, {
+          id: inboxData.id,
+          displayName: result.name ?? (fileName || "Untitled"),
+          type: "other",
+          status: "other",
+        });
+
+        this.logger.info(
+          "Document classified as other (non-financial), skipping matching",
+          {
+            inboxId: inboxData.id,
+            fileName: file.name,
+          },
+        );
+
+        // Send message to Slack about non-financial document
+        try {
+          await ensureBotInChannel({ client: slackClient, channelId });
+          await slackClient.chat.postMessage({
+            channel: channelId,
+            thread_ts: messageTimestamp,
+            text: `This document doesn't appear to be an invoice or receipt. It has been saved to your inbox under "Other" documents.`,
+          });
+        } catch (error) {
+          this.logger.warn("Failed to send Slack message for other document", {
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+
+        // Replace hourglass with checkmark emoji for "other" documents
+        await removeProcessingReaction();
+        if (reactionAdded && messageTimestamp) {
+          try {
+            await slackClient.reactions.add({
+              channel: channelId,
+              timestamp: messageTimestamp,
+              name: "white_check_mark",
+            });
+          } catch {
+            // Ignore - reaction might already exist
+          }
+        }
+
+        return; // Skip embedding and transaction matching for non-financial documents
+      }
+
       // Update inbox with extracted data
       const updatedInbox = await updateInboxWithProcessedData(db, {
         id: inboxData.id,
@@ -291,7 +339,7 @@ export class SlackUploadProcessor extends BaseProcessor<SlackUploadPayload> {
           await ensureBotInChannel({ client: slackClient, channelId });
 
           // Determine document type for message
-          const documentType =
+          const _documentType =
             updatedInbox.type === "invoice" ? "invoice" : "receipt";
           const documentTypeLabel =
             updatedInbox.type === "invoice" ? "invoice" : "receipt";
@@ -360,7 +408,7 @@ Focus on what was purchased (e.g., "office supplies", "software subscription", "
           if (updatedInbox.date) {
             detailFields.push({
               type: "mrkdwn",
-              text: `*Date*\n${format(new Date(updatedInbox.date), "MMM d, yyyy")}`,
+              text: `*Date*\n${format(parseISO(updatedInbox.date), "MMM d, yyyy")}`,
             });
           }
 
@@ -431,7 +479,7 @@ Focus on what was purchased (e.g., "office supplies", "software subscription", "
 
           await slackClient.chat.postMessage({
             channel: channelId,
-            thread_ts: threadId,
+            thread_ts: messageTimestamp,
             text: `${updatedInbox.displayName}: ${formatCurrency(updatedInbox.amount)}`,
             unfurl_links: false,
             unfurl_media: false,

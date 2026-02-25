@@ -1,16 +1,16 @@
 "use client";
 
-import { InvoiceContent } from "@/components/invoice-content";
-import { FormContext } from "@/components/invoice/form-context";
-import { useInvoiceParams } from "@/hooks/use-invoice-params";
-import { useTRPC } from "@/trpc/client";
 import { Sheet } from "@midday/ui/sheet";
 import {
   useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import React from "react";
+import { FormContext } from "@/components/invoice/form-context";
+import { InvoiceContent } from "@/components/invoice-content";
+import { useInvoiceParams } from "@/hooks/use-invoice-params";
+import { useInvoiceEditorStore } from "@/store/invoice-editor";
+import { useTRPC } from "@/trpc/client";
 
 export function InvoiceSheet() {
   const trpc = useTRPC();
@@ -31,7 +31,7 @@ export function InvoiceSheet() {
       },
       {
         enabled: !!invoiceId,
-        staleTime: 0,
+        staleTime: 30 * 1000, // 30 seconds - prevents excessive refetches when reopening
       },
     ),
   );
@@ -46,6 +46,9 @@ export function InvoiceSheet() {
       queryClient.invalidateQueries({
         queryKey: trpc.invoice.defaultSettings.queryKey(),
       });
+
+      // Clear the draft snapshot so the next open starts fresh
+      useInvoiceEditorStore.getState().reset();
     }
 
     setParams(null);

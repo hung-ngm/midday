@@ -1,10 +1,10 @@
 "use client";
 
-import { EnrollMFA } from "@/components/enroll-mfa";
 import { Button } from "@midday/ui/button";
 import { Icons } from "@midday/ui/icons";
 import Link from "next/link";
 import { useState } from "react";
+import { EnrollMFA } from "@/components/enroll-mfa";
 
 type Props = {
   setEnroll: (enroll: boolean) => void;
@@ -16,7 +16,7 @@ function MfaStart({ setEnroll }: Props) {
       <div className="flex w-full flex-col relative">
         <div className="pb-4">
           <div className="text-center">
-            <h1 className="text-lg mb-2 font-serif">
+            <h1 className="text-lg lg:text-xl mb-2 font-serif">
               Multi-factor authentication
             </h1>
             <p className="text-[#878787] text-sm">

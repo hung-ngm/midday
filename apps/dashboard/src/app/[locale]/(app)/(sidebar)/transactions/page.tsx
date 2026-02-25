@@ -1,4 +1,9 @@
+import type { Metadata } from "next";
+import { ErrorBoundary } from "next/dist/client/components/error-boundary";
+import type { SearchParams } from "nuqs/server";
+import { Suspense } from "react";
 import { AddTransactions } from "@/components/add-transactions";
+import { ErrorFallback } from "@/components/error-fallback";
 import { ScrollableContent } from "@/components/scrollable-content";
 import { DataTable } from "@/components/tables/transactions/data-table";
 import { Loading } from "@/components/tables/transactions/loading";
@@ -9,11 +14,8 @@ import { TransactionsUploadZone } from "@/components/transactions-upload-zone";
 import { loadSortParams } from "@/hooks/use-sort-params";
 import { loadTransactionFilterParams } from "@/hooks/use-transaction-filter-params";
 import { loadTransactionTab } from "@/hooks/use-transaction-tab";
-import { HydrateClient, batchPrefetch, trpc } from "@/trpc/server";
+import { batchPrefetch, HydrateClient, trpc } from "@/trpc/server";
 import { getInitialTableSettings } from "@/utils/columns";
-import type { Metadata } from "next";
-import type { SearchParams } from "nuqs/server";
-import { Suspense } from "react";
 
 export const metadata: Metadata = {
   title: "Transactions | Midday",
@@ -65,18 +67,18 @@ export default async function Transactions(props: Props) {
   return (
     <HydrateClient>
       <ScrollableContent>
-        <TransactionsUploadZone>
-          <div className="flex justify-between items-center py-6">
-            <TransactionsSearchFilter />
-            <div className="flex items-center gap-4">
-              <div className="hidden md:flex items-center gap-2">
-                <TransactionsColumnVisibility />
-                <AddTransactions />
-              </div>
-              <TransactionTabs />
+        <div className="flex justify-between items-center py-6">
+          <TransactionsSearchFilter />
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-2">
+              <TransactionsColumnVisibility />
+              <AddTransactions />
             </div>
+            <TransactionTabs />
           </div>
+        </div>
 
+        <ErrorBoundary errorComponent={ErrorFallback}>
           <Suspense
             fallback={
               <Loading
@@ -86,9 +88,11 @@ export default async function Transactions(props: Props) {
               />
             }
           >
-            <DataTable initialSettings={initialSettings} initialTab={tab} />
+            <TransactionsUploadZone>
+              <DataTable initialSettings={initialSettings} initialTab={tab} />
+            </TransactionsUploadZone>
           </Suspense>
-        </TransactionsUploadZone>
+        </ErrorBoundary>
       </ScrollableContent>
     </HydrateClient>
   );

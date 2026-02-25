@@ -1,12 +1,12 @@
 "use client";
 
-import { useRealtime } from "@/hooks/use-realtime";
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
 import type { AppRouter } from "@midday/api/trpc/routers/_app";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import { useCallback, useMemo } from "react";
+import { useRealtime } from "@/hooks/use-realtime";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
 
 // Infer types from tRPC router
 type RouterOutputs = inferRouterOutputs<AppRouter>;
@@ -28,6 +28,11 @@ export function getMetadata(activity: Activity): Record<string, any> {
 export function getMetadataProperty(activity: Activity, key: string): any {
   const metadata = getMetadata(activity);
   return metadata[key];
+}
+
+// Get ISO timestamp for 24 hours ago
+function _get24HoursAgo(): string {
+  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 }
 
 export function useNotifications() {
@@ -60,7 +65,7 @@ export function useNotifications() {
   // Real-time subscription for activities filtered by user_id
   useRealtime({
     channelName: "user-notifications",
-    event: "INSERT",
+    events: ["INSERT"],
     table: "activities",
     filter: `user_id=eq.${user?.id}`,
     onEvent: (payload) => {

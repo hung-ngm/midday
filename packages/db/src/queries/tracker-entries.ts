@@ -1,5 +1,3 @@
-import type { Database } from "@db/client";
-import { teams, trackerEntries } from "@db/schema";
 import {
   endOfMonth,
   endOfWeek,
@@ -8,6 +6,8 @@ import {
   startOfWeek,
 } from "date-fns";
 import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import type { Database } from "../client";
+import { teams, trackerEntries, trackerProjects } from "../schema";
 import { createActivity } from "./activities";
 
 type GetTrackerRecordsByDateParams = {
@@ -544,6 +544,35 @@ export async function stopTimer(db: Database, params: StopTimerParams) {
   const stopTime_ms = new Date(stopTime).getTime();
   const duration = Math.floor((stopTime_ms - startTime) / 1000);
 
+  // Minimum duration threshold (60 seconds)
+  const MIN_DURATION_SECONDS = 60;
+
+  // If duration is too short, delete the entry instead of saving
+  if (duration < MIN_DURATION_SECONDS) {
+    // Get project info before deleting for the response
+    const projectInfo = await db.query.trackerProjects.findFirst({
+      where: eq(trackerProjects.id, entry.projectId!),
+      columns: {
+        id: true,
+        name: true,
+      },
+    });
+
+    // Delete the entry
+    await db.delete(trackerEntries).where(eq(trackerEntries.id, targetEntryId));
+
+    return {
+      id: targetEntryId,
+      discarded: true,
+      duration,
+      project: projectInfo,
+      trackerProject: projectInfo,
+      start: entry.start,
+      stop: entry.stop,
+      description: entry.description,
+    };
+  }
+
   // Update the entry with stop time and duration
   await db
     .update(trackerEntries)
@@ -584,6 +613,7 @@ export async function stopTimer(db: Database, params: StopTimerParams) {
 
   return {
     ...result,
+    discarded: false,
     project: result.trackerProject,
   };
 }
@@ -939,4 +969,22 @@ export async function getBillableHours(
     ),
     currency: baseCurrency,
   };
+}
+
+export type GetTrackerEntryByIdParams = {
+  id: string;
+  teamId: string;
+};
+
+export async function getTrackerEntryById(
+  db: Database,
+  params: GetTrackerEntryByIdParams,
+) {
+  const { id, teamId } = params;
+
+  const entry = await db.query.trackerEntries.findFirst({
+    where: and(eq(trackerEntries.id, id), eq(trackerEntries.teamId, teamId)),
+  });
+
+  return entry ?? null;
 }

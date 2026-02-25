@@ -31,6 +31,11 @@ export const createActivitySchema = z.object({
     "transaction_category_created",
     "transactions_exported",
     "customer_created",
+    "recurring_series_completed",
+    "recurring_series_started",
+    "recurring_series_paused",
+    "recurring_invoice_upcoming",
+    "insight_ready",
   ]),
   source: z.enum(["system", "user"]).default("system"),
   priority: z.number().int().min(1).max(10).default(5),
@@ -76,12 +81,14 @@ export const transactionsCreatedSchema = z.object({
 
 export const transactionsExportedSchema = z.object({
   users: z.array(userSchema),
+  userEmail: z.string().email().optional(),
   transactionCount: z.number(),
-  locale: z.string(),
-  dateFormat: z.string(),
+  locale: z.string().optional(),
+  dateFormat: z.string().optional(),
   downloadLink: z.string().optional(),
   accountantEmail: z.string().optional(),
   sendEmail: z.boolean().optional(),
+  sendCopyToMe: z.boolean().optional(),
 });
 
 export const documentUploadedSchema = z.object({
@@ -191,6 +198,22 @@ export const invoiceSentSchema = z.object({
   invoiceNumber: z.string(),
   customerName: z.string(),
   customerEmail: z.string().email().optional(),
+  // Gmail structured data fields
+  amount: z.number().optional(),
+  currency: z.string().optional(),
+  dueDate: z.string().optional(),
+  // Customizable email content from template
+  emailSubject: z.string().optional().nullable(),
+  emailHeading: z.string().optional().nullable(),
+  emailBody: z.string().optional().nullable(),
+  emailButtonText: z.string().optional().nullable(),
+  // Template labels and logo
+  logoUrl: z.string().optional().nullable(),
+  dueDateLabel: z.string().optional().nullable(),
+  invoiceNoLabel: z.string().optional().nullable(),
+  // Formatting — should match the invoice template
+  locale: z.string().optional().nullable(),
+  dateFormat: z.string().optional().nullable(),
 });
 
 export const invoiceReminderSentSchema = z.object({
@@ -200,6 +223,10 @@ export const invoiceReminderSentSchema = z.object({
   invoiceNumber: z.string(),
   customerName: z.string(),
   customerEmail: z.string().email().optional(),
+  // Gmail structured data fields
+  amount: z.number().optional(),
+  currency: z.string().optional(),
+  dueDate: z.string().optional(),
 });
 
 export const invoiceCancelledSchema = z.object({
@@ -226,6 +253,51 @@ export const invoiceRefundedSchema = z.object({
   refundedAt: z.string().optional(),
 });
 
+export const recurringSeriesCompletedSchema = z.object({
+  users: z.array(userSchema),
+  invoiceId: z.string().uuid(),
+  invoiceNumber: z.string(),
+  customerName: z.string().optional(),
+  recurringId: z.string().uuid(),
+  totalGenerated: z.number(),
+});
+
+export const recurringSeriesStartedSchema = z.object({
+  users: z.array(userSchema),
+  recurringId: z.string().uuid(),
+  invoiceId: z.string().uuid().optional(), // First invoice ID if linked
+  invoiceNumber: z.string().optional(),
+  customerName: z.string().optional(),
+  frequency: z.string(),
+  endType: z.enum(["never", "on_date", "after_count"]),
+  endDate: z.string().optional(),
+  endCount: z.number().optional(),
+});
+
+export const recurringSeriesPausedSchema = z.object({
+  users: z.array(userSchema),
+  recurringId: z.string().uuid(),
+  customerName: z.string().optional(),
+  reason: z.enum(["manual", "auto_failure"]).default("manual"),
+  failureCount: z.number().optional(),
+});
+
+// Schema for individual invoice in the batch
+export const upcomingInvoiceItemSchema = z.object({
+  recurringId: z.string().uuid(),
+  customerName: z.string().optional(),
+  amount: z.number().optional(),
+  currency: z.string().optional(),
+  scheduledAt: z.string(), // ISO date when invoice will be generated
+  frequency: z.string(), // e.g., "weekly", "monthly_date"
+});
+
+export const recurringInvoiceUpcomingSchema = z.object({
+  users: z.array(userSchema),
+  invoices: z.array(upcomingInvoiceItemSchema),
+  count: z.number(),
+});
+
 export const transactionsCategorizedSchema = z.object({
   users: z.array(userSchema),
   categorySlug: z.string(),
@@ -236,6 +308,17 @@ export const transactionsAssignedSchema = z.object({
   users: z.array(userSchema),
   assignedUserId: z.string(),
   transactionIds: z.array(z.string()),
+});
+
+export const insightReadySchema = z.object({
+  users: z.array(userSchema),
+  insightId: z.string(),
+  periodType: z.enum(["weekly", "monthly", "quarterly", "yearly"]),
+  periodLabel: z.string(),
+  periodNumber: z.number(),
+  periodYear: z.number(),
+  title: z.string().optional(),
+  audioUrl: z.string().optional(),
 });
 
 export type UserData = z.infer<typeof userSchema>;
@@ -269,12 +352,26 @@ export type InvoiceReminderSentInput = z.infer<
 export type InvoiceCancelledInput = z.infer<typeof invoiceCancelledSchema>;
 export type InvoiceCreatedInput = z.infer<typeof invoiceCreatedSchema>;
 export type InvoiceRefundedInput = z.infer<typeof invoiceRefundedSchema>;
+export type RecurringSeriesCompletedInput = z.infer<
+  typeof recurringSeriesCompletedSchema
+>;
+export type RecurringSeriesStartedInput = z.infer<
+  typeof recurringSeriesStartedSchema
+>;
+export type RecurringSeriesPausedInput = z.infer<
+  typeof recurringSeriesPausedSchema
+>;
+export type UpcomingInvoiceItem = z.infer<typeof upcomingInvoiceItemSchema>;
+export type RecurringInvoiceUpcomingInput = z.infer<
+  typeof recurringInvoiceUpcomingSchema
+>;
 export type TransactionsCategorizedInput = z.infer<
   typeof transactionsCategorizedSchema
 >;
 export type TransactionsAssignedInput = z.infer<
   typeof transactionsAssignedSchema
 >;
+export type InsightReadyInput = z.infer<typeof insightReadySchema>;
 
 // Notification types map - all available notification types with their data structures
 export type NotificationTypes = {
@@ -296,4 +393,9 @@ export type NotificationTypes = {
   invoice_cancelled: InvoiceCancelledInput;
   invoice_created: InvoiceCreatedInput;
   invoice_refunded: InvoiceRefundedInput;
+  recurring_series_completed: RecurringSeriesCompletedInput;
+  recurring_series_started: RecurringSeriesStartedInput;
+  recurring_series_paused: RecurringSeriesPausedInput;
+  recurring_invoice_upcoming: RecurringInvoiceUpcomingInput;
+  insight_ready: InsightReadyInput;
 };

@@ -1,6 +1,11 @@
 import { publicMiddleware } from "@api/rest/middleware";
 import type { Context } from "@api/rest/types";
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import {
+  buildErrorRedirect,
+  buildSuccessRedirect,
+  mapOAuthError,
+} from "@api/rest/utils/oauth";
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { InboxConnector } from "@midday/inbox/connector";
 import { decryptOAuthState } from "@midday/inbox/utils";
 import { logger } from "@midday/logger";
@@ -85,15 +90,30 @@ app.openapi(
     const dashboardUrl =
       process.env.MIDDAY_DASHBOARD_URL || "https://app.midday.ai";
 
+    // Try to decrypt state first to determine redirect target (apps vs inbox)
+    const parsedState = decryptOAuthState(state);
+    const source = parsedState?.source;
+
+    const redirectPath = parsedState?.redirectPath;
+
     // Handle OAuth errors (user denied access, etc.)
     if (error || !code) {
-      logger.info("Outlook OAuth error or cancelled", { error });
-      return c.redirect(`${dashboardUrl}/inbox?connected=false`, 302);
+      const errorCode = mapOAuthError(error);
+      logger.info("Outlook OAuth error or cancelled", { error, errorCode });
+      return c.redirect(
+        buildErrorRedirect(
+          dashboardUrl,
+          errorCode,
+          "outlook",
+          source,
+          "/inbox",
+          redirectPath,
+        ),
+        302,
+      );
     }
 
-    // Decrypt and validate state - this ensures teamId hasn't been tampered with
-    const parsedState = decryptOAuthState(state);
-
+    // Validate state
     if (!parsedState || parsedState.provider !== "outlook") {
       throw new HTTPException(400, {
         message: "Invalid or expired state. Please try connecting again.",
@@ -109,7 +129,17 @@ app.openapi(
       });
 
       if (!account) {
-        return c.redirect(`${dashboardUrl}/inbox?connected=failed`, 302);
+        return c.redirect(
+          buildErrorRedirect(
+            dashboardUrl,
+            "token_exchange_failed",
+            "outlook",
+            parsedState.source,
+            "/inbox",
+            redirectPath,
+          ),
+          302,
+        );
       }
 
       // Trigger initial inbox setup job
@@ -118,16 +148,14 @@ app.openapi(
       });
 
       // Redirect based on source
-      if (parsedState.source === "apps") {
-        return c.redirect(
-          `${dashboardUrl}/all-done?event=app_oauth_completed`,
-          302,
-        );
-      }
-
-      // Inbox settings flow
       return c.redirect(
-        `${dashboardUrl}/inbox?connected=true&provider=outlook`,
+        buildSuccessRedirect(
+          dashboardUrl,
+          "outlook",
+          parsedState.source,
+          "/inbox",
+          redirectPath,
+        ),
         302,
       );
     } catch (err) {
@@ -136,7 +164,17 @@ app.openapi(
         stack: err instanceof Error ? err.stack : undefined,
       });
 
-      return c.redirect(`${dashboardUrl}/inbox?connected=false`, 302);
+      return c.redirect(
+        buildErrorRedirect(
+          dashboardUrl,
+          "token_exchange_failed",
+          "outlook",
+          parsedState.source,
+          "/inbox",
+          redirectPath,
+        ),
+        302,
+      );
     }
   },
 );

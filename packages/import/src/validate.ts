@@ -3,6 +3,7 @@ import type { Transaction } from "./types";
 
 export const createTransactionSchema = z.object({
   name: z.string(),
+  counterparty_name: z.string().nullable().optional(),
   currency: z.string(),
   bank_account_id: z.string(),
   team_id: z.string(),
@@ -10,7 +11,9 @@ export const createTransactionSchema = z.object({
   status: z.enum(["posted", "pending"]),
   method: z.enum(["card", "bank", "other"]),
   date: z.string().date(),
-  amount: z.number(),
+  amount: z.number().refine((n) => !Number.isNaN(n), {
+    message: "Amount is required and must be a valid number",
+  }),
   manual: z.boolean(),
   category_slug: z.string().nullable(),
 });

@@ -1,6 +1,5 @@
 "use client";
 
-import { formatAmount } from "@/utils/format";
 import {
   Bar,
   CartesianGrid,
@@ -11,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatAmount } from "@/utils/format";
 import {
   commonChartConfig,
   createCompactTickFormatter,
@@ -74,12 +74,12 @@ const CustomTooltip = ({
         <p className="mb-1 text-[#707070] dark:text-[#666666]">{label}</p>
         {typeof thisYear === "number" && (
           <p className="text-black dark:text-white">
-            This Year: {formatCurrency(thisYear)}
+            Current: {formatCurrency(thisYear)}
           </p>
         )}
         {typeof lastYear === "number" && (
           <p className="text-black dark:text-white">
-            Last Year: {formatCurrency(lastYear)}
+            Previous: {formatCurrency(lastYear)}
           </p>
         )}
         {typeof average === "number" && (
@@ -113,7 +113,7 @@ export function MonthlyRevenueChart({
     <div className="w-full">
       {/* Chart */}
       <div style={{ height }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" debounce={1}>
           <ComposedChart
             data={data}
             margin={{ top: 6, right: 6, left: -marginLeft, bottom: 6 }}

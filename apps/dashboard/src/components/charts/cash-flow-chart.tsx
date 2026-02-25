@@ -1,6 +1,5 @@
 "use client";
 
-import { formatAmount } from "@/utils/format";
 import {
   Bar,
   CartesianGrid,
@@ -12,13 +11,15 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatAmount } from "@/utils/format";
 import { ChartLegend } from "./base-charts";
+import type { BaseChartProps } from "./chart-utils";
 import {
   commonChartConfig,
   createYAxisTickFormatter,
+  getZeroInclusiveDomain,
   useChartMargin,
 } from "./chart-utils";
-import type { BaseChartProps } from "./chart-utils";
 
 interface CashFlowData {
   month: string;
@@ -101,7 +102,7 @@ export function CashFlowChart({
 
       {/* Chart */}
       <div style={{ height }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" debounce={1}>
           <ComposedChart
             data={data}
             margin={{ top: 6, right: 6, left: -marginLeft, bottom: 6 }}
@@ -147,6 +148,7 @@ export function CashFlowChart({
                 fontFamily: commonChartConfig.fontFamily,
               }}
               tickFormatter={tickFormatter}
+              domain={getZeroInclusiveDomain()}
             />
 
             <Tooltip

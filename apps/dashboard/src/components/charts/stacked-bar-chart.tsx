@@ -1,10 +1,6 @@
 // @ts-nocheck
 "use client";
 
-import { useUserQuery } from "@/hooks/use-user";
-import { formatAmount } from "@/utils/format";
-import { Icons } from "@midday/ui/icons";
-import { format } from "date-fns";
 import {
   Bar,
   CartesianGrid,
@@ -15,9 +11,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useUserQuery } from "@/hooks/use-user";
+import { formatAmount } from "@/utils/format";
 import {
   commonChartConfig,
   createCompactTickFormatter,
+  formatChartMonth,
   useChartMargin,
 } from "./chart-utils";
 import { SelectableChartWrapper } from "./selectable-chart-wrapper";
@@ -85,13 +84,15 @@ export function StackedBarChart({
 }) {
   const tickFormatter = createCompactTickFormatter();
 
+  const totalMonths = data.result.length;
+
   const formattedData = data.result.map((item) => ({
     ...item,
     value: item.value,
     recurring: item.recurring,
     total: item.total,
     meta: data.meta,
-    date: format(new Date(item.date), "MMM"),
+    date: formatChartMonth(item.date, totalMonths),
   }));
 
   // Calculate margin using the utility hook
@@ -99,20 +100,9 @@ export function StackedBarChart({
 
   const chartContent = (
     <div className="w-full relative">
-      <div className="space-x-4 absolute right-0 -top-10 hidden md:flex">
-        <div className="flex space-x-2 items-center">
-          <span className="w-2 h-2 rounded-full bg-[#C6C6C6] dark:bg-[#606060]" />
-          <span className="text-sm text-[#606060]">Total expenses</span>
-        </div>
-        <div className="flex space-x-2 items-center">
-          <Icons.DotRaster />
-          <span className="text-sm text-[#606060]">Recurring</span>
-        </div>
-      </div>
-
       {/* Chart */}
       <div style={{ height }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" debounce={1}>
           <ComposedChart
             data={formattedData}
             barGap={15}

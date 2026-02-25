@@ -1,4 +1,3 @@
-import { useInboxFilterParams } from "@/hooks/use-inbox-filter-params";
 import { cn } from "@midday/ui/cn";
 import {
   DropdownMenu,
@@ -16,6 +15,7 @@ import { Icons } from "@midday/ui/icons";
 import { Input } from "@midday/ui/input";
 import { useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
+import { useInboxFilterParams } from "@/hooks/use-inbox-filter-params";
 
 const statusFilters = [
   { id: "all", name: "All" },
@@ -46,44 +46,42 @@ export function InboxSearch() {
 
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
-      <div className="flex space-x-4 items-center w-full">
-        <form
-          className="relative w-full"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setIsOpen(false);
-          }}
-        >
-          <Icons.Search className="absolute pointer-events-none left-3 top-[11px]" />
-          <Input
-            placeholder="Search or filter"
-            className="pl-9 w-full"
-            value={filterParams.q ?? ""}
-            onChange={handleSearch}
-            autoComplete="off"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck="false"
-          />
+      <form
+        className="relative w-[280px]"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setIsOpen(false);
+        }}
+      >
+        <Icons.Search className="absolute pointer-events-none left-3 top-[11px]" />
+        <Input
+          placeholder="Search"
+          className="pl-9 w-full pr-9"
+          value={filterParams.q ?? ""}
+          onChange={handleSearch}
+          autoComplete="off"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck="false"
+        />
 
-          <DropdownMenuTrigger asChild>
-            <button
-              onClick={() => setIsOpen((prev) => !prev)}
-              type="button"
-              className={cn(
-                "absolute z-10 right-3 top-[10px] opacity-50 transition-opacity duration-300 hover:opacity-100",
-                hasFilter && "opacity-100",
-                isOpen && "opacity-100",
-              )}
-            >
-              <Icons.Filter />
-            </button>
-          </DropdownMenuTrigger>
-        </form>
-      </div>
+        <DropdownMenuTrigger asChild>
+          <button
+            onClick={() => setIsOpen((prev) => !prev)}
+            type="button"
+            className={cn(
+              "absolute z-10 right-3 top-[10px] opacity-50 transition-opacity duration-300 hover:opacity-100",
+              hasFilter && "opacity-100",
+              isOpen && "opacity-100",
+            )}
+          >
+            <Icons.Filter />
+          </button>
+        </DropdownMenuTrigger>
+      </form>
 
       <DropdownMenuContent
-        className="w-[350px]"
+        className="w-[280px]"
         align="end"
         sideOffset={19}
         alignOffset={-11}

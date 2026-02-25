@@ -1,5 +1,9 @@
 "use client";
 
+import { useChatActions, useChatId } from "@ai-sdk-tools/store";
+import { Icons } from "@midday/ui/icons";
+import { getDefaultTaxType } from "@midday/utils";
+import { useQuery } from "@tanstack/react-query";
 import { FormatAmount } from "@/components/format-amount";
 import { useChatInterface } from "@/hooks/use-chat-interface";
 import { useMetricsFilter } from "@/hooks/use-metrics-filter";
@@ -9,12 +13,9 @@ import { useI18n } from "@/locales/client";
 import { useTRPC } from "@/trpc/client";
 import { formatAmount } from "@/utils/format";
 import { getPeriodLabel } from "@/utils/metrics-date-utils";
-import { useChatActions, useChatId } from "@ai-sdk-tools/store";
-import { Icons } from "@midday/ui/icons";
-import { getDefaultTaxType } from "@midday/utils";
-import { useQuery } from "@tanstack/react-query";
 import { BaseWidget } from "./base";
 import { WIDGET_POLLING_CONFIG } from "./widget-config";
+import { WidgetSkeleton } from "./widget-skeleton";
 
 function getTaxTerminology(
   countryCode: string | undefined,
@@ -57,13 +58,23 @@ export function TaxSummaryWidget() {
 
   const taxTerms = getTaxTerminology(team?.countryCode ?? undefined, t);
 
-  const { data: yearData } = useQuery({
+  const { data: yearData, isLoading } = useQuery({
     ...trpc.widgets.getTaxSummary.queryOptions({
       from,
       to,
     }),
     ...WIDGET_POLLING_CONFIG,
   });
+
+  if (isLoading) {
+    return (
+      <WidgetSkeleton
+        title={taxTerms.title}
+        icon={<Icons.ReceiptLong className="size-4" />}
+        descriptionLines={2}
+      />
+    );
+  }
 
   const taxData = yearData?.result;
 
@@ -146,7 +157,7 @@ export function TaxSummaryWidget() {
         <div className="flex flex-col gap-4">
           {/* Main net amount */}
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-medium">
+            <span className="text-2xl font-normal">
               <FormatAmount
                 amount={Math.abs(netAmount)}
                 currency={currency || "USD"}

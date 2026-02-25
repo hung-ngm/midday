@@ -5,6 +5,7 @@ import { EditorContent } from "./components/editor-content";
 import { LineItems } from "./components/line-items";
 import { Meta } from "./components/meta";
 import { Note } from "./components/note";
+import { PaidWatermark } from "./components/paid-watermark";
 import { PaymentDetails } from "./components/payment-details";
 import { QRCode } from "./components/qr-code";
 import { Summary } from "./components/summary";
@@ -52,25 +53,38 @@ Font.register({
   ],
 });
 
-export async function PdfTemplate({
-  invoiceNumber,
-  issueDate,
-  dueDate,
-  template,
-  lineItems,
-  customerDetails,
-  fromDetails,
-  discount,
-  paymentDetails,
-  noteDetails,
-  currency,
-  vat,
-  tax,
-  amount,
-  topBlock,
-  bottomBlock,
-  token,
-}: Invoice) {
+type PdfTemplateOptions = {
+  isReceipt?: boolean;
+};
+
+export async function PdfTemplate(
+  {
+    invoiceNumber,
+    issueDate,
+    dueDate,
+    paidAt,
+    template,
+    lineItems,
+    customerDetails,
+    fromDetails,
+    discount,
+    paymentDetails,
+    noteDetails,
+    currency,
+    vat,
+    tax,
+    amount,
+    topBlock,
+    bottomBlock,
+    token,
+  }: Invoice,
+  options?: PdfTemplateOptions,
+) {
+  const isReceipt = options?.isReceipt ?? false;
+
+  // Override title for receipt
+  const title = isReceipt ? "Receipt" : template.title;
+
   let qrCode = null;
 
   if (template.includeQr) {
@@ -98,22 +112,25 @@ export async function PdfTemplate({
             marginBottom: 20,
             flexDirection: "row",
             justifyContent: "space-between",
+            alignItems: "flex-start",
           }}
         >
-          <Meta
-            invoiceNoLabel={template.invoiceNoLabel}
-            issueDateLabel={template.issueDateLabel}
-            dueDateLabel={template.dueDateLabel}
-            invoiceNo={invoiceNumber}
-            issueDate={issueDate}
-            dueDate={dueDate}
-            timezone={template.timezone}
-            dateFormat={template.dateFormat}
-            title={template.title}
-          />
+          <View style={{ flex: 1, minWidth: 0, marginRight: 20 }}>
+            <Meta
+              invoiceNoLabel={template.invoiceNoLabel}
+              issueDateLabel={template.issueDateLabel}
+              dueDateLabel={template.dueDateLabel}
+              invoiceNo={invoiceNumber}
+              issueDate={issueDate}
+              dueDate={dueDate}
+              timezone={template.timezone}
+              dateFormat={template.dateFormat}
+              title={title}
+            />
+          </View>
 
           {template?.logoUrl && (
-            <div style={{ maxWidth: "300px" }}>
+            <View style={{ maxWidth: 300, flexShrink: 0 }}>
               <Image
                 src={template.logoUrl}
                 style={{
@@ -121,7 +138,7 @@ export async function PdfTemplate({
                   objectFit: "contain",
                 }}
               />
-            </div>
+            </View>
           )}
         </View>
 
@@ -166,31 +183,41 @@ export async function PdfTemplate({
             flex: 1,
             flexDirection: "column",
             justifyContent: "flex-end",
+            marginTop: 20,
           }}
         >
-          <Summary
-            amount={amount}
-            tax={tax}
-            vat={vat}
-            currency={currency}
-            totalLabel={template.totalSummaryLabel}
-            taxLabel={template.taxLabel}
-            vatLabel={template.vatLabel}
-            taxRate={template.taxRate}
-            vatRate={template.vatRate}
-            locale={template.locale}
-            discount={discount}
-            discountLabel={template.discountLabel}
-            includeDiscount={template.includeDiscount}
-            includeVat={template.includeVat}
-            includeTax={template.includeTax}
-            includeLineItemTax={template.includeLineItemTax}
-            includeDecimals={template.includeDecimals}
-            subtotalLabel={template.subtotalLabel}
-            lineItems={lineItems}
-          />
+          <View wrap={false}>
+            <Summary
+              amount={amount}
+              tax={tax}
+              vat={vat}
+              currency={currency}
+              totalLabel={template.totalSummaryLabel}
+              taxLabel={template.taxLabel}
+              vatLabel={template.vatLabel}
+              taxRate={template.taxRate}
+              vatRate={template.vatRate}
+              locale={template.locale}
+              discount={discount}
+              discountLabel={template.discountLabel}
+              includeDiscount={template.includeDiscount}
+              includeVat={template.includeVat}
+              includeTax={template.includeTax}
+              includeLineItemTax={template.includeLineItemTax}
+              includeDecimals={template.includeDecimals}
+              subtotalLabel={template.subtotalLabel}
+              lineItems={lineItems}
+            />
+            {isReceipt && (
+              <PaidWatermark
+                paidAt={paidAt}
+                dateFormat={template.dateFormat}
+                timezone={template.timezone}
+              />
+            )}
+          </View>
 
-          <View style={{ flexDirection: "row", marginTop: 20 }}>
+          <View wrap={false} style={{ flexDirection: "row", marginTop: 20 }}>
             <View style={{ flex: 1, marginRight: 10 }}>
               <PaymentDetails
                 content={paymentDetails}

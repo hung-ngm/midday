@@ -3,7 +3,17 @@ import "./instrument";
 
 import { trpcServer } from "@hono/trpc-server";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { closeSharedRedisClient } from "@midday/cache/shared-redis";
+import { closeDb, getPoolStats } from "@midday/db/client";
+import {
+  buildDependenciesResponse,
+  buildReadinessResponse,
+  checkDependencies,
+} from "@midday/health/checker";
+import { apiDependencies } from "@midday/health/probes";
+import { createLoggerWithContext, logger } from "@midday/logger";
 import { Scalar } from "@scalar/hono-api-reference";
+import * as Sentry from "@sentry/bun";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import { routers } from "./rest/routers";
@@ -31,6 +41,7 @@ app.use(
       "Content-Type",
       "User-Agent",
       "accept-language",
+      "trpc-accept",
       "x-trpc-source",
       "x-user-locale",
       "x-user-timezone",
@@ -50,16 +61,66 @@ app.use(
   }),
 );
 
+if (process.env.DEBUG_PERF === "true") {
+  const perfLogger = createLoggerWithContext("perf:trpc");
+
+  app.use("/trpc/*", async (c, next) => {
+    const start = performance.now();
+    await next();
+    const elapsed = performance.now() - start;
+    const procedures = c.req.path.replace("/trpc/", "").split(",");
+    perfLogger.info("request", {
+      totalMs: +elapsed.toFixed(2),
+      procedureCount: procedures.length,
+      procedures,
+      status: c.res.status,
+      pool: getPoolStats(),
+    });
+  });
+}
+
 app.use(
   "/trpc/*",
   trpcServer({
     router: appRouter,
     createContext: createTRPCContext,
+    onError: ({ error, path, input }) => {
+      logger.error(`[tRPC] ${path}`, {
+        message: error.message,
+        code: error.code,
+        cause: error.cause instanceof Error ? error.cause.message : undefined,
+        stack: error.stack,
+      });
+
+      // Send to Sentry (skip client errors like NOT_FOUND, UNAUTHORIZED)
+      if (error.code === "INTERNAL_SERVER_ERROR") {
+        Sentry.captureException(error, {
+          tags: { source: "trpc", path: path ?? "unknown" },
+          extra: {
+            input:
+              typeof input === "object" ? JSON.stringify(input) : undefined,
+          },
+        });
+      }
+    },
   }),
 );
 
-app.get("/health", (c) => {
-  return c.json({ status: "ok" }, 200);
+app.get("/favicon.ico", (c) => c.body(null, 204));
+app.get("/robots.txt", (c) => c.body(null, 204));
+
+app.get("/health", (c) => c.json({ status: "ok" }, 200));
+
+app.get("/health/ready", async (c) => {
+  const results = await checkDependencies(apiDependencies(), 1);
+  const response = buildReadinessResponse(results);
+  return c.json(response, response.status === "ok" ? 200 : 503);
+});
+
+app.get("/health/dependencies", async (c) => {
+  const results = await checkDependencies(apiDependencies());
+  const response = buildDependenciesResponse(results);
+  return c.json(response, response.status === "ok" ? 200 : 503);
 });
 
 app.doc("/openapi", {
@@ -108,9 +169,86 @@ app.get(
 
 app.route("/", routers);
 
+// Global error handler — captures unhandled route errors to Sentry
+app.onError((err, c) => {
+  Sentry.captureException(err, {
+    tags: { source: "hono", path: c.req.path, method: c.req.method },
+  });
+  logger.error(`[Hono] ${c.req.method} ${c.req.path}`, {
+    message: err.message,
+    stack: err.stack,
+  });
+  return c.json({ error: "Internal Server Error" }, 500);
+});
+
+/**
+ * Graceful shutdown handlers
+ * Close database connections cleanly on process termination (e.g. Railway deploys)
+ */
+const shutdown = async (signal: string) => {
+  logger.info(`Received ${signal}, starting graceful shutdown...`);
+
+  const SHUTDOWN_TIMEOUT = 12_000; // 12s — fits within Railway's 15s draining window
+
+  const shutdownPromise = (async () => {
+    try {
+      logger.info("Closing database connections...");
+      await closeDb();
+
+      logger.info("Closing Redis connection...");
+      closeSharedRedisClient();
+
+      logger.info("Flushing Sentry events...");
+      await Sentry.close(2000);
+
+      logger.info("Graceful shutdown complete");
+    } catch (error) {
+      logger.error("Error during shutdown", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  })();
+
+  const timeoutPromise = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      logger.warn("Shutdown timeout reached, forcing exit");
+      resolve();
+    }, SHUTDOWN_TIMEOUT);
+  });
+
+  await Promise.race([shutdownPromise, timeoutPromise]);
+  process.exit(0);
+};
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+/**
+ * Unhandled exception and rejection handlers
+ */
+process.on("uncaughtException", (err) => {
+  logger.error("Uncaught exception", { error: err.message, stack: err.stack });
+  Sentry.captureException(err, {
+    tags: { errorType: "uncaught_exception" },
+  });
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  logger.error("Unhandled rejection", {
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+  Sentry.captureException(
+    reason instanceof Error ? reason : new Error(String(reason)),
+    {
+      tags: { errorType: "unhandled_rejection" },
+    },
+  );
+});
+
 export default {
-  port: process.env.PORT ? Number.parseInt(process.env.PORT) : 3000,
+  port: process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000,
   fetch: app.fetch,
-  host: "::", // Listen on all interfaces
+  host: "0.0.0.0", // Listen on all interfaces
   idleTimeout: 60,
 };

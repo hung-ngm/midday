@@ -1,19 +1,3 @@
-import type { Database } from "@db/client";
-import {
-  accountingSyncRecords,
-  bankAccounts,
-  bankConnections,
-  inbox,
-  tags,
-  transactionAttachments,
-  transactionCategories,
-  transactionEmbeddings,
-  type transactionFrequencyEnum,
-  transactionMatchSuggestions,
-  transactionTags,
-  transactions,
-  users,
-} from "@db/schema";
 import {
   CONTRA_REVENUE_CATEGORIES,
   REVENUE_CATEGORIES,
@@ -40,6 +24,22 @@ import {
 } from "drizzle-orm";
 import type { SQL } from "drizzle-orm/sql/sql";
 import { nanoid } from "nanoid";
+import type { Database } from "../client";
+import {
+  accountingSyncRecords,
+  bankAccounts,
+  bankConnections,
+  inbox,
+  tags,
+  transactionAttachments,
+  transactionCategories,
+  transactionEmbeddings,
+  type transactionFrequencyEnum,
+  transactionMatchSuggestions,
+  transactions,
+  transactionTags,
+  users,
+} from "../schema";
 import { createActivity } from "./activities";
 import { type Attachment, createAttachments } from "./transaction-attachments";
 
@@ -117,8 +117,8 @@ export async function getTransactions(
 
   // Search query filter (name, description, or amount)
   if (q) {
-    const numericQ = Number.parseFloat(q);
-    if (!Number.isNaN(numericQ)) {
+    const numericQ = Number(q);
+    if (!Number.isNaN(numericQ) && q.trim() !== "") {
       whereConditions.push(sql`${transactions.amount} = ${numericQ}`);
     } else {
       const searchQuery = buildSearchQuery(q);
@@ -307,7 +307,10 @@ export async function getTransactions(
     );
   }
 
-  // Amount range filter
+  // Amount range filter - behavior depends on type filter:
+  // - type="expense": filter on negative amounts (-max to -min)
+  // - type="income": filter on positive amounts (min to max)
+  // - type=null: use ABS() to include both directions
   if (
     filterAmountRange &&
     filterAmountRange.length === 2 &&
@@ -322,13 +325,32 @@ export async function getTransactions(
         [minAmount, maxAmount] = [maxAmount, minAmount];
       }
 
-      // Use COALESCE to handle multi-currency transactions
-      whereConditions.push(
-        sql`COALESCE(${transactions.baseAmount}, ${transactions.amount}) >= ${minAmount}`,
-      );
-      whereConditions.push(
-        sql`COALESCE(${transactions.baseAmount}, ${transactions.amount}) <= ${maxAmount}`,
-      );
+      if (type === "expense") {
+        // For expenses (negative amounts), filter between -maxAmount and -minAmount
+        // e.g., range [50, 100] filters amounts between -100 and -50
+        whereConditions.push(
+          sql`COALESCE(${transactions.baseAmount}, ${transactions.amount}) >= ${-maxAmount}`,
+        );
+        whereConditions.push(
+          sql`COALESCE(${transactions.baseAmount}, ${transactions.amount}) <= ${-minAmount}`,
+        );
+      } else if (type === "income") {
+        // For income (positive amounts), filter between minAmount and maxAmount
+        whereConditions.push(
+          sql`COALESCE(${transactions.baseAmount}, ${transactions.amount}) >= ${minAmount}`,
+        );
+        whereConditions.push(
+          sql`COALESCE(${transactions.baseAmount}, ${transactions.amount}) <= ${maxAmount}`,
+        );
+      } else {
+        // For "Any" type, use ABS() to include both positive and negative amounts
+        whereConditions.push(
+          sql`ABS(COALESCE(${transactions.baseAmount}, ${transactions.amount})) >= ${minAmount}`,
+        );
+        whereConditions.push(
+          sql`ABS(COALESCE(${transactions.baseAmount}, ${transactions.amount})) <= ${maxAmount}`,
+        );
+      }
     }
   }
 
@@ -415,6 +437,8 @@ export async function getTransactions(
       taxRate: transactions.taxRate,
       taxType: transactions.taxType,
       taxAmount: transactions.taxAmount,
+      baseAmount: transactions.baseAmount,
+      baseCurrency: transactions.baseCurrency,
       enrichmentCompleted: transactions.enrichmentCompleted,
       isFulfilled:
         sql<boolean>`(EXISTS (SELECT 1 FROM ${transactionAttachments} WHERE ${eq(transactionAttachments.transactionId, transactions.id)} AND ${eq(transactionAttachments.teamId, teamId)}) OR ${transactions.status} = 'completed')`.as(
@@ -708,6 +732,8 @@ export async function getTransactionById(
       taxRate: transactions.taxRate,
       taxType: transactions.taxType,
       taxAmount: transactions.taxAmount,
+      baseAmount: transactions.baseAmount,
+      baseCurrency: transactions.baseCurrency,
       enrichmentCompleted: transactions.enrichmentCompleted,
       isFulfilled:
         sql<boolean>`(EXISTS (SELECT 1 FROM ${transactionAttachments} WHERE ${eq(transactionAttachments.transactionId, transactions.id)} AND ${eq(transactionAttachments.teamId, params.teamId)})) OR ${transactions.status} = 'completed'`.as(
@@ -936,25 +962,23 @@ export async function deleteTransactions(
     });
 }
 
-export async function getTransactionsAmountFullRangeData(
+export async function deleteTransactionsByInternalIds(
   db: Database,
-  teamId: string,
+  params: { teamId: string; internalIds: string[] },
 ) {
-  // Use COALESCE(baseAmount, amount) to match the backend filter logic
-  // This ensures the frontend count matches the actual filtered results
+  if (params.internalIds.length === 0) return [];
+
+  const fullIds = params.internalIds.map((id) => `${params.teamId}_${id}`);
+
   return db
-    .select({
-      amount: sql<number>`COALESCE(${transactions.baseAmount}, ${transactions.amount})`,
-      currency: sql<string>`COALESCE(${transactions.baseCurrency}, ${transactions.currency})`,
-    })
-    .from(transactions)
+    .delete(transactions)
     .where(
       and(
-        eq(transactions.teamId, teamId),
-        eq(transactions.internal, false),
-        ne(transactions.status, "excluded"),
+        inArray(transactions.internalId, fullIds),
+        eq(transactions.teamId, params.teamId),
       ),
-    );
+    )
+    .returning({ id: transactions.id });
 }
 
 type GetSimilarTransactionsParams = {
@@ -1506,6 +1530,19 @@ export async function updateTransaction(
     return null;
   }
 
+  // If status is being changed from "exported" to something else, delete accounting sync records
+  // This ensures transactions are properly unmarked as exported
+  if (dataToUpdate.status !== undefined && dataToUpdate.status !== "exported") {
+    await db
+      .delete(accountingSyncRecords)
+      .where(
+        and(
+          eq(accountingSyncRecords.transactionId, id),
+          eq(accountingSyncRecords.teamId, teamId),
+        ),
+      );
+  }
+
   if (dataToUpdate.categorySlug) {
     createActivity(db, {
       teamId,
@@ -1569,6 +1606,8 @@ export async function getTransactionsByIds(
       tax_type: transactions.taxType,
       tax_rate: transactions.taxRate,
       tax_amount: transactions.taxAmount,
+      base_amount: transactions.baseAmount,
+      base_currency: transactions.baseCurrency,
       status: transactions.status,
       attachments: sql<
         Array<{
@@ -1718,6 +1757,19 @@ export async function updateTransactions(
   } else {
     // If no fields to update, just return the transaction IDs
     results = ids.map((id) => ({ id }));
+  }
+
+  // If status is being changed from "exported" to something else, delete accounting sync records
+  // This ensures transactions are properly unmarked as exported
+  if (input.status !== undefined && input.status !== "exported") {
+    await db
+      .delete(accountingSyncRecords)
+      .where(
+        and(
+          eq(accountingSyncRecords.teamId, teamId),
+          inArray(accountingSyncRecords.transactionId, ids),
+        ),
+      );
   }
 
   // Create activities for transaction updates
@@ -1908,47 +1960,23 @@ export type UpsertTransactionsParams = {
 
 /**
  * Bulk upsert transactions with conflict handling on internalId
- * Used by import-transactions and update-account-base-currency processors
+ * Used by import-transactions processor. Skips duplicates (onConflictDoNothing).
  */
 export async function upsertTransactions(
   db: Database,
   params: UpsertTransactionsParams,
 ): Promise<Array<{ id: string }>> {
-  const { transactions: transactionsData, teamId } = params;
+  // Exclude teamId from the params
+  const { transactions: transactionsData, teamId: _teamId } = params;
+  if (transactionsData.length === 0) {
+    return [];
+  }
 
   const upserted = await db
     .insert(transactions)
     .values(transactionsData)
-    .onConflictDoUpdate({
+    .onConflictDoNothing({
       target: [transactions.internalId],
-      set: {
-        // Update all fields except id and createdAt
-        name: sql`excluded.name`,
-        amount: sql`excluded.amount`,
-        currency: sql`excluded.currency`,
-        date: sql`excluded.date`,
-        description: sql`excluded.description`,
-        method: sql`excluded.method`,
-        status: sql`excluded.status`,
-        balance: sql`excluded.balance`,
-        note: sql`excluded.note`,
-        categorySlug: sql`excluded.category_slug`,
-        counterpartyName: sql`excluded.counterparty_name`,
-        merchantName: sql`excluded.merchant_name`,
-        bankAccountId: sql`excluded.bank_account_id`,
-        assignedId: sql`excluded.assigned_id`,
-        internal: sql`excluded.internal`,
-        notified: sql`excluded.notified`,
-        manual: sql`excluded.manual`,
-        baseAmount: sql`excluded.base_amount`,
-        baseCurrency: sql`excluded.base_currency`,
-        taxAmount: sql`excluded.tax_amount`,
-        taxRate: sql`excluded.tax_rate`,
-        taxType: sql`excluded.tax_type`,
-        recurring: sql`excluded.recurring`,
-        frequency: sql`excluded.frequency`,
-        enrichmentCompleted: sql`excluded.enrichment_completed`,
-      },
     })
     .returning({
       id: transactions.id,
@@ -1983,6 +2011,36 @@ export async function getTransactionsByAccountId(
     );
 }
 
+export type GetTransactionCountByBankAccountIdParams = {
+  bankAccountId: string;
+  teamId: string;
+};
+
+/**
+ * Get transaction count for a bank account
+ * Used by delete bank account dialog to show impact
+ */
+export async function getTransactionCountByBankAccountId(
+  db: Database,
+  params: GetTransactionCountByBankAccountIdParams,
+): Promise<number> {
+  const { bankAccountId, teamId } = params;
+
+  const [result] = await db
+    .select({
+      count: sql<number>`COUNT(*)::int`.as("count"),
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.bankAccountId, bankAccountId),
+        eq(transactions.teamId, teamId),
+      ),
+    );
+
+  return result?.count ?? 0;
+}
+
 export type BulkUpdateTransactionsBaseCurrencyParams = {
   transactions: Array<{
     id: string;
@@ -1994,85 +2052,46 @@ export type BulkUpdateTransactionsBaseCurrencyParams = {
 
 /**
  * Bulk update transactions with base currency/amount
- * Uses batch processing internally for large datasets
+ * Uses per-row updates in a transaction — avoids array serialization issues
+ * with postgres.js + Drizzle (unnest expands arrays into many params).
  */
 export async function bulkUpdateTransactionsBaseCurrency(
   db: Database,
   params: BulkUpdateTransactionsBaseCurrencyParams,
 ) {
   const { transactions: transactionsData, teamId } = params;
-  const BATCH_LIMIT = 500;
 
-  // Process in batches
-  for (let i = 0; i < transactionsData.length; i += BATCH_LIMIT) {
-    const batch = transactionsData.slice(i, i + BATCH_LIMIT);
+  if (!teamId?.trim()) {
+    throw new Error("bulkUpdateTransactionsBaseCurrency: teamId is required");
+  }
 
-    // Get existing transactions to preserve all fields
-    const transactionIds = batch.map((tx) => tx.id);
-    const existingTransactions = await db
-      .select()
-      .from(transactions)
-      .where(
-        and(
-          inArray(transactions.id, transactionIds),
-          eq(transactions.teamId, teamId),
-        ),
-      );
+  if (transactionsData.length === 0) return;
 
-    // Create upsert data preserving all existing fields, updating only baseAmount and baseCurrency
-    const upsertData: UpsertTransactionData[] = existingTransactions.map(
-      (tx) => {
-        const update = batch.find((b) => b.id === tx.id);
-        return {
-          name: tx.name,
-          date: tx.date,
-          method: tx.method as "other" | "card_purchase" | "transfer",
-          amount: Number(tx.amount),
-          currency: tx.currency ?? "",
-          teamId: tx.teamId,
-          bankAccountId: tx.bankAccountId ?? null,
-          internalId: tx.internalId ?? "",
-          status: (tx.status ?? "posted") as
-            | "pending"
-            | "completed"
-            | "archived"
-            | "posted"
-            | "excluded",
-          manual: tx.manual ?? false,
-          categorySlug: tx.categorySlug,
-          description: tx.description,
-          balance: tx.balance ? Number(tx.balance) : null,
-          note: tx.note,
-          counterpartyName: tx.counterpartyName,
-          merchantName: tx.merchantName,
-          assignedId: tx.assignedId,
-          internal: tx.internal ?? false,
-          notified: tx.notified ?? false,
-          baseAmount:
-            update?.baseAmount ??
-            (tx.baseAmount ? Number(tx.baseAmount) : null),
-          baseCurrency: update?.baseCurrency ?? tx.baseCurrency ?? null,
-          taxAmount: tx.taxAmount ? Number(tx.taxAmount) : null,
-          taxRate: tx.taxRate ? Number(tx.taxRate) : null,
-          taxType: tx.taxType,
-          recurring: tx.recurring ?? false,
-          frequency: tx.frequency as
-            | "weekly"
-            | "biweekly"
-            | "monthly"
-            | "semi_monthly"
-            | "annually"
-            | "irregular"
-            | "unknown"
-            | null,
-          enrichmentCompleted: tx.enrichmentCompleted ?? false,
-        };
-      },
-    );
+  const BATCH_SIZE = 100;
+  const CONCURRENCY = 10;
 
-    await upsertTransactions(db, {
-      transactions: upsertData,
-      teamId,
+  for (let i = 0; i < transactionsData.length; i += BATCH_SIZE) {
+    const batch = transactionsData.slice(i, i + BATCH_SIZE);
+    await db.transaction(async (tx) => {
+      for (let j = 0; j < batch.length; j += CONCURRENCY) {
+        const chunk = batch.slice(j, j + CONCURRENCY);
+        await Promise.all(
+          chunk.map((item) =>
+            tx
+              .update(transactions)
+              .set({
+                baseAmount: item.baseAmount,
+                baseCurrency: item.baseCurrency,
+              })
+              .where(
+                and(
+                  eq(transactions.id, item.id),
+                  eq(transactions.teamId, teamId),
+                ),
+              ),
+          ),
+        );
+      }
     });
   }
 }

@@ -1,7 +1,20 @@
 "use client";
 
+import {
+  horizontalListSortingStrategy,
+  SortableContext,
+} from "@dnd-kit/sortable";
+import { Button } from "@midday/ui/button";
+import { TableHead, TableHeader, TableRow } from "@midday/ui/table";
+import type { Header, Table } from "@tanstack/react-table";
+import { ArrowDown, ArrowUp } from "lucide-react";
+import { useMemo } from "react";
 import { HorizontalPagination } from "@/components/horizontal-pagination";
-import type { TableScrollState } from "@/components/tables/core";
+import {
+  ACTIONS_FULL_WIDTH_HEADER_CLASS,
+  ACTIONS_STICKY_HEADER_CLASS,
+  type TableScrollState,
+} from "@/components/tables/core";
 import { DraggableHeader } from "@/components/tables/draggable-header";
 import { ResizeHandle } from "@/components/tables/resize-handle";
 import { useSortQuery } from "@/hooks/use-sort-query";
@@ -11,15 +24,6 @@ import {
   SORT_FIELD_MAPS,
   STICKY_COLUMNS,
 } from "@/utils/table-configs";
-import {
-  SortableContext,
-  horizontalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { Button } from "@midday/ui/button";
-import { TableHead, TableHeader, TableRow } from "@midday/ui/table";
-import type { Header, Table } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp } from "lucide-react";
-import { useMemo } from "react";
 
 interface Props<TData> {
   table?: Table<TData>;
@@ -73,37 +77,54 @@ export function DataTableHeader<TData>({
               const isSticky = meta?.sticky;
               const canReorder =
                 !NON_REORDERABLE_COLUMNS.customers.has(columnId);
+              const isActions = columnId === "actions";
 
               if (!isVisible(columnId)) return null;
 
-              // Check if this is the last column before actions (should flex to fill space)
+              // Check if actions should be full width (no non-sticky visible columns)
+              const hasNonStickyVisible = headers.some((h) => {
+                if (h.column.id === "actions") return false;
+                if (!isVisible(h.column.id)) return false;
+                const hMeta = h.column.columnDef.meta as
+                  | { sticky?: boolean }
+                  | undefined;
+                return !hMeta?.sticky;
+              });
+              const actionsFullWidth = isActions && !hasNonStickyVisible;
+
+              // Check if this column should flex
               const isLastBeforeActions =
                 headerIndex === headers.length - 2 &&
                 headers[headers.length - 1]?.column.id === "actions";
+              const shouldFlex =
+                (isLastBeforeActions && !isSticky) || actionsFullWidth;
 
               const headerStyle = {
-                width: header.getSize(),
-                minWidth: isSticky
-                  ? header.getSize()
-                  : header.column.columnDef.minSize,
-                maxWidth: isSticky ? header.getSize() : undefined,
-                ...getStickyStyle(columnId),
-                // Only apply flex: 1 to non-sticky columns
-                ...(isLastBeforeActions &&
-                  !isSticky && {
-                    flex: 1,
-                  }),
+                width: actionsFullWidth ? undefined : header.getSize(),
+                minWidth: actionsFullWidth
+                  ? undefined
+                  : isSticky
+                    ? header.getSize()
+                    : header.column.columnDef.minSize,
+                maxWidth: actionsFullWidth
+                  ? undefined
+                  : isSticky
+                    ? header.getSize()
+                    : undefined,
+                ...(!actionsFullWidth && getStickyStyle(columnId)),
+                ...(shouldFlex && { flex: 1 }),
               };
 
-              // Sticky columns use regular TableHead (not draggable)
+              // Non-reorderable columns (sticky + actions)
               if (!canReorder) {
                 const stickyClass = getStickyClassName(
                   columnId,
                   "group/header relative h-full px-4 border-t border-border flex items-center",
                 );
-                const isActionsColumn = columnId === "actions";
-                const finalClassName = isActionsColumn
-                  ? "group/header relative h-full px-4 !border-t !border-l !border-border flex items-center justify-center md:sticky md:right-0 bg-background z-10"
+                const finalClassName = isActions
+                  ? actionsFullWidth
+                    ? ACTIONS_FULL_WIDTH_HEADER_CLASS
+                    : ACTIONS_STICKY_HEADER_CLASS
                   : `${stickyClass} bg-background z-10`;
 
                 return (
@@ -258,6 +279,12 @@ function getHeaderLabel(columnId: string): string {
     email: "Email",
     invoices: "Invoices",
     projects: "Projects",
+    industry: "Industry",
+    country: "Country",
+    totalRevenue: "Revenue",
+    outstanding: "Outstanding",
+    lastInvoice: "Last Invoice",
+    website: "Website",
     tags: "Tags",
     actions: "Actions",
   };

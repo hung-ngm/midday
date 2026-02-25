@@ -1,4 +1,6 @@
-import type { Database } from "@db/client";
+import { createLoggerWithContext } from "@midday/logger";
+import { parseISO } from "date-fns";
+import type { Database } from "../client";
 import {
   inbox,
   inboxAccounts,
@@ -8,10 +10,10 @@ import {
   transactionEmbeddings,
   transactionMatchSuggestions,
   transactions,
-} from "@db/schema";
-import { createLoggerWithContext } from "@midday/logger";
+} from "../schema";
 
 const logger = createLoggerWithContext("inbox");
+
 import {
   and,
   asc,
@@ -65,8 +67,8 @@ function calculateDateScore(
   inboxDate: string,
   transactionDate: string,
 ): number {
-  const inboxDateObj = new Date(inboxDate);
-  const transactionDateObj = new Date(transactionDate);
+  const inboxDateObj = parseISO(inboxDate);
+  const transactionDateObj = parseISO(transactionDate);
   const diffTime = Math.abs(
     transactionDateObj.getTime() - inboxDateObj.getTime(),
   );
@@ -96,11 +98,13 @@ export type GetInboxParams = {
     | "analyzing"
     | "suggested_match"
     | "no_match"
+    | "other"
     | null;
+  tab?: "all" | "other" | null;
 };
 
 export async function getInbox(db: Database, params: GetInboxParams) {
-  const { teamId, cursor, order, sort, pageSize = 20, q, status } = params;
+  const { teamId, cursor, order, sort, pageSize = 20, q, status, tab } = params;
 
   const whereConditions: SQL[] = [
     eq(inbox.teamId, teamId),
@@ -156,10 +160,26 @@ export async function getInbox(db: Database, params: GetInboxParams) {
     whereConditions.push(eq(inbox.status, status));
   }
 
+  // Apply tab filter
+  if (tab === "other") {
+    // Show only "other" type documents (non-financial)
+    whereConditions.push(
+      or(eq(inbox.type, "other"), eq(inbox.status, "other")) as SQL,
+    );
+  } else {
+    // "all" tab (default) shows invoices/receipts only, excludes "other" documents
+    whereConditions.push(
+      and(
+        or(sql`${inbox.type} IS NULL`, ne(inbox.type, "other")),
+        ne(inbox.status, "other"),
+      ) as SQL,
+    );
+  }
+
   // Apply search query filter
   if (q) {
     // If the query is a number, search by amount
-    if (!Number.isNaN(Number.parseInt(q))) {
+    if (!Number.isNaN(Number.parseInt(q, 10))) {
       whereConditions.push(sql`${inbox.amount}::text LIKE '%' || ${q} || '%'`);
     } else {
       // Use both FTS and ILIKE for better special character support
@@ -188,6 +208,7 @@ export async function getInbox(db: Database, params: GetInboxParams) {
       contentType: inbox.contentType,
       date: inbox.date,
       status: inbox.status,
+      type: inbox.type,
       createdAt: inbox.createdAt,
       website: inbox.website,
       senderEmail: inbox.senderEmail,
@@ -288,6 +309,7 @@ export async function getInboxById(db: Database, params: GetInboxByIdParams) {
       contentType: inbox.contentType,
       date: inbox.date,
       status: inbox.status,
+      type: inbox.type,
       createdAt: inbox.createdAt,
       website: inbox.website,
       senderEmail: inbox.senderEmail,
@@ -353,6 +375,7 @@ export async function getInboxById(db: Database, params: GetInboxByIdParams) {
         contentType: inbox.contentType,
         date: inbox.date,
         status: inbox.status,
+        type: inbox.type,
         createdAt: inbox.createdAt,
         website: inbox.website,
         senderEmail: inbox.senderEmail,
@@ -414,6 +437,7 @@ export async function getInboxById(db: Database, params: GetInboxByIdParams) {
       contentType: inbox.contentType,
       date: inbox.date,
       status: inbox.status,
+      type: inbox.type,
       createdAt: inbox.createdAt,
       website: inbox.website,
       senderEmail: inbox.senderEmail,
@@ -739,6 +763,10 @@ export async function getInboxSearch(
     const whereConditions: SQL[] = [
       eq(inbox.teamId, teamId),
       ne(inbox.status, "deleted"),
+      // Exclude "other" documents (non-financial) from matching search
+      // These documents skip embedding/matching in the worker processors
+      ne(inbox.status, "other"),
+      or(sql`${inbox.type} IS NULL`, ne(inbox.type, "other")) as SQL,
       // Exclude items that are already matched to other transactions
       sql`${inbox.transactionId} IS NULL`,
     ];
@@ -1047,7 +1075,9 @@ export type UpdateInboxParams = {
     | "done"
     | "pending"
     | "analyzing"
-    | "suggested_match";
+    | "suggested_match"
+    | "other";
+  contentType?: string;
 };
 
 export async function updateInbox(db: Database, params: UpdateInboxParams) {
@@ -1547,6 +1577,8 @@ export async function getInboxByFilePath(
       id: inbox.id,
       status: inbox.status,
       createdAt: inbox.createdAt,
+      contentType: inbox.contentType,
+      displayName: inbox.displayName,
     })
     .from(inbox)
     .where(
@@ -1567,6 +1599,8 @@ export async function getInboxByFilePath(
       id: item.id,
       status: item.status,
       createdAt: item.createdAt,
+      contentType: item.contentType,
+      displayName: item.displayName,
     };
   }
 
@@ -1576,6 +1610,8 @@ export async function getInboxByFilePath(
       id: inbox.id,
       status: inbox.status,
       createdAt: inbox.createdAt,
+      contentType: inbox.contentType,
+      displayName: inbox.displayName,
     })
     .from(inbox)
     .where(
@@ -1596,6 +1632,8 @@ export async function getInboxByFilePath(
     id: result.id,
     status: result.status,
     createdAt: result.createdAt,
+    contentType: result.contentType,
+    displayName: result.displayName,
   };
 }
 
@@ -1882,7 +1920,7 @@ export type UpdateInboxWithProcessedDataParams = {
   taxAmount?: number;
   taxRate?: number;
   taxType?: string;
-  type?: "invoice" | "expense" | null;
+  type?: "invoice" | "expense" | "other" | null;
   invoiceNumber?: string;
   status?:
     | "pending"
@@ -1891,7 +1929,8 @@ export type UpdateInboxWithProcessedDataParams = {
     | "processing"
     | "done"
     | "deleted"
-    | "analyzing";
+    | "analyzing"
+    | "other";
 };
 
 export async function updateInboxWithProcessedData(

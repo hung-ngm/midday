@@ -1,13 +1,10 @@
-// @ts-nocheck
-import { getAccessValidForDays } from "@midday/engine/gocardless/utils";
-import { addDays, addMonths } from "date-fns";
-import { nanoid } from "nanoid";
+import { addDays } from "date-fns";
 import type { Client } from "../types";
-import { remove } from "../utils/storage";
 
 type UpdateBankConnectionData = {
   id: string;
   referenceId?: string;
+  accessValidForDays: number;
 };
 
 // NOTE: Only GoCardLess needs to be updated
@@ -15,15 +12,12 @@ export async function updateBankConnection(
   supabase: Client,
   data: UpdateBankConnectionData,
 ) {
-  const { id, referenceId } = data;
+  const { id, referenceId, accessValidForDays } = data;
 
   return await supabase
     .from("bank_connections")
     .update({
-      expires_at: addDays(
-        new Date(),
-        getAccessValidForDays({ institutionId: id }),
-      ).toDateString(),
+      expires_at: addDays(new Date(), accessValidForDays).toDateString(),
       reference_id: referenceId,
     })
     .eq("id", id)

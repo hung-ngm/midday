@@ -1,7 +1,3 @@
-import { createPlaidLinkTokenAction } from "@/actions/institutions/create-plaid-link";
-import { reconnectEnableBankingLinkAction } from "@/actions/institutions/reconnect-enablebanking-link";
-import { reconnectGoCardLessLinkAction } from "@/actions/institutions/reconnect-gocardless-link";
-import { getUrl } from "@/utils/environment";
 import { isDesktopApp } from "@midday/desktop-client/platform";
 import { Button } from "@midday/ui/button";
 import { Icons } from "@midday/ui/icons";
@@ -13,11 +9,22 @@ import {
   TooltipTrigger,
 } from "@midday/ui/tooltip";
 import { useToast } from "@midday/ui/use-toast";
-import { useAction } from "next-safe-action/hooks";
+import { useMutation } from "@tanstack/react-query";
+import { nanoid } from "nanoid";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 import { useScript } from "usehooks-ts";
+import { useTeamQuery } from "@/hooks/use-team";
+import { useTRPC } from "@/trpc/client";
+import { getUrl } from "@/utils/environment";
+
+/**
+ * Callback type for when a provider reconnect flow completes.
+ * - "reconnect": Provider may have changed account IDs, trigger reconnect job
+ * - "sync": Provider preserves account IDs (e.g., Plaid update mode), trigger manual sync
+ */
+type OnCompleteType = "reconnect" | "sync";
 
 type Props = {
   id: string;
@@ -26,7 +33,11 @@ type Props = {
   institutionId: string;
   referenceId?: string | null;
   accessToken: string | null;
-  onManualSync: () => void;
+  /**
+   * Called when the provider's reconnect flow completes successfully.
+   * @param type - "reconnect" if account IDs may have changed, "sync" if they're preserved
+   */
+  onComplete: (type: OnCompleteType) => void;
   variant?: "button" | "icon";
 };
 
@@ -37,51 +48,36 @@ export function ReconnectProvider({
   institutionId,
   referenceId,
   accessToken,
-  onManualSync,
+  onComplete,
   variant,
 }: Props) {
   const { toast } = useToast();
   const { theme } = useTheme();
+  const trpc = useTRPC();
+  const { data: team } = useTeamQuery();
   const [plaidToken, setPlaidToken] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
 
-  const reconnectGoCardLessLink = useAction(reconnectGoCardLessLinkAction, {
-    onExecute: () => {
-      setIsLoading(true);
-    },
-    onError: () => {
-      setIsLoading(false);
-
-      toast({
-        duration: 2500,
-        variant: "error",
-        title: "Something went wrong please try again.",
-      });
-    },
-    onSuccess: () => {
-      setIsLoading(false);
-    },
-  });
-
-  const reconnectEnableBankingLink = useAction(
-    reconnectEnableBankingLinkAction,
-    {
-      onExecute: () => {
-        setIsLoading(true);
+  const createPlaidLink = useMutation(
+    trpc.banking.plaidLink.mutationOptions({
+      onSuccess: (result) => {
+        if (result.data.link_token) {
+          setPlaidToken(result.data.link_token);
+        }
       },
-      onError: () => {
-        setIsLoading(false);
+    }),
+  );
 
-        toast({
-          duration: 2500,
-          variant: "error",
-          title: "Something went wrong please try again.",
-        });
-      },
-      onSuccess: () => {
-        setIsLoading(false);
-      },
-    },
+  const createGocardlessAgreement = useMutation(
+    trpc.banking.gocardlessAgreement.mutationOptions({}),
+  );
+
+  const createGocardlessLink = useMutation(
+    trpc.banking.gocardlessLink.mutationOptions({}),
+  );
+
+  const createEnableBankingLink = useMutation(
+    trpc.banking.enablebankingLink.mutationOptions({}),
   );
 
   useScript("https://cdn.teller.io/connect/connect.js", {
@@ -96,7 +92,8 @@ export function ReconnectProvider({
     product: ["transactions"],
     onSuccess: () => {
       setPlaidToken(undefined);
-      onManualSync();
+      // Plaid uses "update mode" which preserves account IDs - just sync
+      onComplete("sync");
     },
     onExit: () => {
       setPlaidToken(undefined);
@@ -111,7 +108,8 @@ export function ReconnectProvider({
       enrollmentId,
       appearance: theme,
       onSuccess: () => {
-        onManualSync();
+        // Teller may change account IDs after reconnect - trigger reconnect job
+        onComplete("reconnect");
       },
       onFailure: () => {},
     });
@@ -130,31 +128,76 @@ export function ReconnectProvider({
   const handleOnClick = async () => {
     switch (provider) {
       case "plaid": {
-        const token = await createPlaidLinkTokenAction(
-          accessToken ?? undefined,
-        );
-
-        if (token) {
-          setPlaidToken(token);
-        }
+        createPlaidLink.mutate({
+          accessToken: accessToken ?? undefined,
+        });
 
         return;
       }
       case "gocardless": {
-        return reconnectGoCardLessLink.execute({
-          id,
-          institutionId,
-          availableHistory: 60,
-          redirectTo: `${getUrl()}/api/gocardless/reconnect`,
-          isDesktop: isDesktopApp(),
-        });
+        if (!team?.id) {
+          return;
+        }
+
+        setIsLoading(true);
+        const reference = `${team.id}:${nanoid()}`;
+        const link = new URL(`${getUrl()}/api/gocardless/reconnect`);
+        link.searchParams.append("id", id);
+
+        if (isDesktopApp()) {
+          link.searchParams.append("desktop", "true");
+        }
+
+        try {
+          const agreementData = await createGocardlessAgreement.mutateAsync({
+            institutionId,
+            transactionTotalDays: 60,
+          });
+
+          link.searchParams.append(
+            "access_valid_for_days",
+            String(agreementData.data.access_valid_for_days),
+          );
+
+          const linkData = await createGocardlessLink.mutateAsync({
+            agreement: agreementData.data.id,
+            institutionId,
+            redirect: link.toString(),
+            reference,
+          });
+
+          window.location.href = linkData.data.link;
+        } catch {
+          setIsLoading(false);
+          toast({
+            duration: 2500,
+            variant: "error",
+            title: "Something went wrong please try again.",
+          });
+        }
+        return;
       }
       case "enablebanking": {
-        return reconnectEnableBankingLink.execute({
-          institutionId,
-          isDesktop: isDesktopApp(),
-          sessionId: referenceId!,
-        });
+        setIsLoading(true);
+
+        try {
+          const linkData = await createEnableBankingLink.mutateAsync({
+            institutionId,
+            state: isDesktopApp()
+              ? `desktop:reconnect:${referenceId}`
+              : `web:reconnect:${referenceId}`,
+          });
+
+          window.location.href = linkData.data.url;
+        } catch {
+          setIsLoading(false);
+          toast({
+            duration: 2500,
+            variant: "error",
+            title: "Something went wrong please try again.",
+          });
+        }
+        return;
       }
       case "teller":
         return openTeller();

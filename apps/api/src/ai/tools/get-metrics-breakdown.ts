@@ -1,9 +1,9 @@
-import { artifact, getWriter } from "@ai-sdk-tools/artifacts";
 import { openai } from "@ai-sdk/openai";
+import { artifact, getWriter } from "@ai-sdk-tools/artifacts";
 import type { AppContext } from "@api/ai/agents/config/shared";
 import { metricsBreakdownSummaryArtifact } from "@api/ai/artifacts/metrics-breakdown";
 import { generateArtifactDescription } from "@api/ai/utils/artifact-title";
-import { getToolDateDefaults } from "@api/ai/utils/tool-date-defaults";
+import { resolveToolParams } from "@api/ai/utils/period-dates";
 import { checkBankAccountsRequired } from "@api/ai/utils/tool-helpers";
 import {
   CONTRA_REVENUE_CATEGORIES,
@@ -17,8 +17,7 @@ import {
   getTransactions,
 } from "@midday/db/queries";
 import { formatAmount } from "@midday/utils/format";
-import { generateText } from "ai";
-import { tool } from "ai";
+import { generateText, tool } from "ai";
 import {
   eachMonthOfInterval,
   endOfMonth,
@@ -32,13 +31,13 @@ import { z } from "zod";
 import { createMonthlyArtifactType } from "./metrics-breakdown-constants";
 
 const getMetricsBreakdownSchema = z.object({
-  from: z.string().optional().describe("Start date (ISO 8601)"),
-  to: z.string().optional().describe("End date (ISO 8601)"),
-  currency: z
-    .string()
-    .describe("Currency code (ISO 4217, e.g. 'USD')")
-    .nullable()
-    .optional(),
+  period: z
+    .enum(["3-months", "6-months", "this-year", "1-year", "2-years", "5-years"])
+    .optional()
+    .describe("Historical period"),
+  from: z.string().optional().describe("Start date (yyyy-MM-dd)"),
+  to: z.string().optional().describe("End date (yyyy-MM-dd)"),
+  currency: z.string().nullable().optional().describe("Currency code"),
   chartType: z
     .string()
     .optional()
@@ -150,10 +149,11 @@ function createMonthlyBreakdownArtifact(monthKey: string) {
 
 export const getMetricsBreakdownTool = tool({
   description:
-    "Get a comprehensive breakdown of financial metrics for a specific period. Use this tool when the user requests a 'breakdown', 'break down', 'show me a breakdown', 'breakdown of', 'detailed breakdown', or 'comprehensive breakdown' of any financial metric (revenue, expenses, profit, burn rate, etc.). Provides revenue, expenses, profit, transactions, category breakdowns, and analysis. ALWAYS use this tool (not getBurnRate, getRevenueSummary, etc.) when 'breakdown' is mentioned in the request.",
+    "Get a comprehensive breakdown of financial metrics for a specific period. Use this tool when the user requests a 'breakdown', 'break down', 'show me a breakdown', 'breakdown of', 'detailed breakdown', or 'comprehensive breakdown' of any financial metric (revenue, expenses, profit, burn rate, etc.). Provides revenue, expenses, profit, transactions, category breakdowns, and analysis. ALWAYS use this tool (not getBurnRate, getRevenueSummary, etc.) when 'breakdown' is mentioned in the request. " +
+    "IMPORTANT: Use the 'period' parameter for standard time ranges.",
   inputSchema: getMetricsBreakdownSchema,
   execute: async function* (
-    { from, to, currency, chartType, showCanvas },
+    { period, from, to, currency, chartType, showCanvas },
     executionOptions,
   ) {
     const appContext = executionOptions.experimental_context as AppContext;
@@ -182,12 +182,17 @@ export const getMetricsBreakdownTool = tool({
     }
 
     try {
-      // Use fiscal year-aware defaults if dates not provided
-      const defaultDates = getToolDateDefaults(appContext.fiscalYearStartMonth);
-      const finalFrom = from ?? defaultDates.from;
-      const finalTo = to ?? defaultDates.to;
+      const resolved = resolveToolParams({
+        toolName: "getMetricsBreakdown",
+        appContext,
+        aiParams: { period, from, to, currency },
+      });
 
-      const targetCurrency = currency || appContext.baseCurrency || "USD";
+      const finalFrom = resolved.from;
+      const finalTo = resolved.to;
+      const finalCurrency = resolved.currency;
+
+      const targetCurrency = finalCurrency || "USD";
       const locale = appContext.locale || "en-US";
 
       // Check if period spans multiple months
@@ -274,7 +279,7 @@ export const getMetricsBreakdownTool = tool({
             teamId,
             from: monthFrom,
             to: monthTo,
-            currency: currency ?? undefined,
+            currency: finalCurrency ?? undefined,
             type: "revenue",
             revenueType: "net",
           });
@@ -284,14 +289,14 @@ export const getMetricsBreakdownTool = tool({
             teamId,
             from: monthFrom,
             to: monthTo,
-            currency: currency ?? undefined,
+            currency: finalCurrency ?? undefined,
           });
 
           const periodSummary = await getSpendingForPeriod(db, {
             teamId,
             from: monthFrom,
             to: monthTo,
-            currency: currency ?? undefined,
+            currency: finalCurrency ?? undefined,
           });
 
           // Fetch profit data for this month
@@ -299,7 +304,7 @@ export const getMetricsBreakdownTool = tool({
             teamId,
             from: monthFrom,
             to: monthTo,
-            currency: currency ?? undefined,
+            currency: finalCurrency ?? undefined,
             type: "profit",
             revenueType: "net",
           });
@@ -391,7 +396,7 @@ export const getMetricsBreakdownTool = tool({
 
               return {
                 id: tx.id,
-                date: format(new Date(tx.date), "MMM d, yyyy"),
+                date: format(parseISO(tx.date), "MMM d, yyyy"),
                 name: tx.name,
                 amount: txAmount,
                 formattedAmount:
@@ -431,7 +436,7 @@ export const getMetricsBreakdownTool = tool({
           totalTransactionCount += transactionCount;
 
           // Store monthly data for comparison
-          const monthLabel = format(new Date(monthFrom), "MMM yyyy");
+          const monthLabel = format(parseISO(monthFrom), "MMM yyyy");
           allMonthlyData.push({
             monthKey,
             monthLabel,
@@ -632,7 +637,7 @@ Provide a concise analysis (3-4 sentences) highlighting key insights, trends, an
           messages: [
             {
               role: "user",
-              content: `Analyze this multi-month financial breakdown for ${appContext.companyName || "the business"} from ${format(new Date(finalFrom), "MMM d, yyyy")} to ${format(new Date(finalTo), "MMM d, yyyy")}:
+              content: `Analyze this multi-month financial breakdown for ${appContext.companyName || "the business"} from ${format(parseISO(finalFrom), "MMM d, yyyy")} to ${format(parseISO(finalTo), "MMM d, yyyy")}:
 
 Total Period Summary:
 - Revenue: ${formatAmount({ amount: totalRevenue, currency: targetCurrency, locale })}
@@ -686,7 +691,7 @@ Write it as natural, flowing text.`,
           locale,
         });
 
-        let responseText = `Financial breakdown for ${format(new Date(finalFrom), "MMM d, yyyy")} to ${format(new Date(finalTo), "MMM d, yyyy")}: ${formattedRevenue} in revenue, ${formattedExpenses} in expenses, resulting in ${formattedProfit} profit across ${monthlyPeriods.length} month${monthlyPeriods.length > 1 ? "s" : ""}.\n\n`;
+        let responseText = `Financial breakdown for ${format(parseISO(finalFrom), "MMM d, yyyy")} to ${format(parseISO(finalTo), "MMM d, yyyy")}: ${formattedRevenue} in revenue, ${formattedExpenses} in expenses, resulting in ${formattedProfit} profit across ${monthlyPeriods.length} month${monthlyPeriods.length > 1 ? "s" : ""}.\n\n`;
         responseText += `${summaryText}\n\n`;
         responseText +=
           "Detailed monthly breakdowns are available for each month.";
@@ -699,7 +704,7 @@ Write it as natural, flowing text.`,
         const formattedAggregatedTransactions = aggregatedTransactions.map(
           (tx) => ({
             id: `aggregated-${tx.name}-${tx.category}`, // Synthetic ID for aggregated transactions
-            date: `${format(new Date(finalFrom), "MMM d")} - ${format(new Date(finalTo), "MMM d, yyyy")}`, // Date range
+            date: `${format(parseISO(finalFrom), "MMM d")} - ${format(parseISO(finalTo), "MMM d, yyyy")}`, // Date range
             name: tx.name,
             amount: tx.amount,
             formattedAmount: tx.formattedAmount,
@@ -756,7 +761,7 @@ Write it as natural, flowing text.`,
         teamId,
         from: finalFrom,
         to: finalTo,
-        currency: currency ?? undefined,
+        currency: finalCurrency ?? undefined,
         type: "revenue",
         revenueType: "net",
       });
@@ -766,14 +771,14 @@ Write it as natural, flowing text.`,
         teamId,
         from: finalFrom,
         to: finalTo,
-        currency: currency ?? undefined,
+        currency: finalCurrency ?? undefined,
       });
 
       const periodSummary = await getSpendingForPeriod(db, {
         teamId,
         from: finalFrom,
         to: finalTo,
-        currency: currency ?? undefined,
+        currency: finalCurrency ?? undefined,
       });
 
       // Fetch profit data
@@ -781,7 +786,7 @@ Write it as natural, flowing text.`,
         teamId,
         from: finalFrom,
         to: finalTo,
-        currency: currency ?? undefined,
+        currency: finalCurrency ?? undefined,
         type: "profit",
         revenueType: "net",
       });
@@ -887,7 +892,7 @@ Write it as natural, flowing text.`,
 
           return {
             id: tx.id,
-            date: format(new Date(tx.date), "MMM d, yyyy"),
+            date: format(parseISO(tx.date), "MMM d, yyyy"),
             name: tx.name,
             amount: txAmount,
             formattedAmount:
@@ -953,7 +958,7 @@ Write it as natural, flowing text.`,
         messages: [
           {
             role: "user",
-            content: `Analyze this financial breakdown for ${appContext.companyName || "the business"} from ${format(new Date(finalFrom), "MMM d, yyyy")} to ${format(new Date(finalTo), "MMM d, yyyy")}:
+            content: `Analyze this financial breakdown for ${appContext.companyName || "the business"} from ${format(parseISO(finalFrom), "MMM d, yyyy")} to ${format(parseISO(finalTo), "MMM d, yyyy")}:
 
 Revenue: ${formatAmount({ amount: revenue, currency: targetCurrency, locale })}
 Expenses: ${formatAmount({ amount: expenses, currency: targetCurrency, locale })}
@@ -1017,7 +1022,7 @@ Provide a concise analysis (3-4 sentences) highlighting key insights, trends, an
 
       if (showCanvas) {
         // Simplified text-focused response when canvas is shown
-        responseText = `Financial breakdown for ${format(new Date(finalFrom), "MMM d, yyyy")} to ${format(new Date(finalTo), "MMM d, yyyy")}: ${formattedRevenue} in revenue, ${formattedExpenses} in expenses, resulting in ${formattedProfit} profit.`;
+        responseText = `Financial breakdown for ${format(parseISO(finalFrom), "MMM d, yyyy")} to ${format(parseISO(finalTo), "MMM d, yyyy")}: ${formattedRevenue} in revenue, ${formattedExpenses} in expenses, resulting in ${formattedProfit} profit.`;
         responseText +=
           "\n\nA detailed visual breakdown with transactions, categories, and analysis is available.";
       } else {

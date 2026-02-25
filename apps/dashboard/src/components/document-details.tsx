@@ -1,5 +1,7 @@
 "use client";
 
+import { SheetHeader } from "@midday/ui/sheet";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DocumentActions } from "@/components/document-actions";
 import { DocumentDetailsSkeleton } from "@/components/document-details-skeleton";
 import { DocumentTags } from "@/components/document-tags";
@@ -8,8 +10,6 @@ import { VaultRelatedFiles } from "@/components/vault/vault-related-files";
 import { useDocumentParams } from "@/hooks/use-document-params";
 import { useTRPC } from "@/trpc/client";
 import { formatSize } from "@/utils/format";
-import { SheetHeader } from "@midday/ui/sheet";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 export function DocumentDetails() {
   const trpc = useTRPC();
@@ -25,8 +25,8 @@ export function DocumentDetails() {
       id: params.documentId!,
     }),
     enabled: isOpen,
-    staleTime: 0, // Always consider data stale so it always refetches
-    initialData: () => {
+    staleTime: 30 * 1000, // 30 seconds - prevents excessive refetches when reopening
+    placeholderData: () => {
       const pages = queryClient
         .getQueriesData({ queryKey: trpc.documents.get.infiniteQueryKey() })
         // @ts-expect-error

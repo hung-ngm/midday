@@ -1,16 +1,5 @@
 "use client";
 
-import { AssignUser } from "@/components/assign-user";
-import { SelectAccount } from "@/components/select-account";
-import { SelectCategory } from "@/components/select-category";
-import { SelectCurrency } from "@/components/select-currency";
-import { TransactionAttachments } from "@/components/transaction-attachments";
-import { useInvalidateTransactionQueries } from "@/hooks/use-invalidate-transaction-queries";
-import { useTeamQuery } from "@/hooks/use-team";
-import { useTransactionParams } from "@/hooks/use-transaction-params";
-import { useUserQuery } from "@/hooks/use-user";
-import { useZodForm } from "@/hooks/use-zod-form";
-import { useTRPC } from "@/trpc/client";
 import { utc } from "@date-fns/utc";
 import { uniqueCurrencies } from "@midday/location/currencies";
 import {
@@ -44,6 +33,17 @@ import { format, formatISO } from "date-fns";
 import { nanoid } from "nanoid";
 import { useEffect, useState } from "react";
 import { z } from "zod/v3";
+import { AssignUser } from "@/components/assign-user";
+import { SelectAccount } from "@/components/select-account";
+import { SelectCategory } from "@/components/select-category";
+import { SelectCurrency } from "@/components/select-currency";
+import { TransactionAttachments } from "@/components/transaction-attachments";
+import { useInvalidateTransactionQueries } from "@/hooks/use-invalidate-transaction-queries";
+import { useTeamQuery } from "@/hooks/use-team";
+import { useTransactionParams } from "@/hooks/use-transaction-params";
+import { useUserQuery } from "@/hooks/use-user";
+import { useZodForm } from "@/hooks/use-zod-form";
+import { useTRPC } from "@/trpc/client";
 
 const formSchema = z.object({
   name: z.string().min(1),
@@ -70,12 +70,39 @@ const formSchema = z.object({
     .optional(),
 });
 
+type ManualAttachment = NonNullable<
+  z.infer<typeof formSchema>["attachments"]
+>[number];
+
+type AttachmentUploadEvent = {
+  path?: string[];
+  name: string;
+  size: number;
+  type: string;
+};
+
+const hasAttachmentPath = (
+  file: AttachmentUploadEvent,
+): file is ManualAttachment => Array.isArray(file.path);
+
+const isSameAttachment = (
+  left: ManualAttachment,
+  right: AttachmentUploadEvent,
+) =>
+  Array.isArray(right.path) &&
+  left.name === right.name &&
+  left.type === right.type &&
+  left.size === right.size &&
+  left.path.join("/") === right.path.join("/");
+
 export function TransactionCreateForm() {
   const trpc = useTRPC();
-  const queryClient = useQueryClient();
+  const _queryClient = useQueryClient();
   const invalidateTransactionQueries = useInvalidateTransactionQueries();
   const { setParams } = useTransactionParams();
   const [isOpen, setIsOpen] = useState(false);
+  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
+  const [temporaryAttachmentId] = useState(() => nanoid());
   const { data: user } = useUserQuery();
   const { data: team } = useTeamQuery();
   const { data: accounts } = useQuery(
@@ -117,7 +144,7 @@ export function TransactionCreateForm() {
   const attachments = form.watch("attachments");
   const bankAccountId = form.watch("bankAccountId");
   const transactionType = form.watch("transactionType");
-  const amount = form.watch("amount");
+  const _amount = form.watch("amount");
 
   useEffect(() => {
     if (!bankAccountId && accounts?.length) {
@@ -131,6 +158,41 @@ export function TransactionCreateForm() {
       }
     }
   }, [accounts, bankAccountId]);
+
+  const getFormAttachments = () => form.getValues("attachments") ?? [];
+
+  const setFormAttachments = (next: ManualAttachment[]) => {
+    form.setValue("attachments", next, { shouldDirty: true });
+  };
+
+  const handleAttachmentsUploadingChange = (isUploading: boolean) => {
+    setIsUploadingAttachments(isUploading);
+  };
+
+  const handleAttachmentUpload = (files: AttachmentUploadEvent[]) => {
+    const uploadedAttachments = files.filter(hasAttachmentPath);
+
+    if (uploadedAttachments.length === 0) {
+      return;
+    }
+
+    setFormAttachments([...getFormAttachments(), ...uploadedAttachments]);
+  };
+
+  const handleAttachmentDelete = (file: AttachmentUploadEvent) => {
+    setFormAttachments(
+      getFormAttachments().filter(
+        (attachment) => !isSameAttachment(attachment, file),
+      ),
+    );
+  };
+
+  const attachmentPreviewData = attachments?.map((attachment) => ({
+    ...attachment,
+    id: attachment.path.join("/"),
+    filename: attachment.name,
+    path: attachment.path.join("/"),
+  }));
 
   return (
     <Form {...form}>
@@ -349,6 +411,7 @@ export function TransactionCreateForm() {
                   <PopoverContent className="w-auto p-0" align="end">
                     <Calendar
                       mode="single"
+                      weekStartsOn={user?.weekStartsOnMonday ? 1 : 0}
                       selected={field.value ? utc(field.value) : undefined}
                       onSelect={(value) => {
                         if (value) {
@@ -447,18 +510,13 @@ export function TransactionCreateForm() {
                   transaction
                 </p>
                 <TransactionAttachments
-                  // NOTE: For manual attachments, we need to generate a unique id
-                  id={nanoid()}
-                  data={attachments?.map((attachment) => ({
-                    ...attachment,
-                    id: nanoid(),
-                    filename: attachment.name,
-                    path: attachment.path.join("/"),
-                  }))}
-                  onUpload={(files) => {
-                    // @ts-expect-error
-                    form.setValue("attachments", files);
-                  }}
+                  // Manual create: keep attachments in form state, persist on submit.
+                  id={temporaryAttachmentId}
+                  persistToTransaction={false}
+                  data={attachmentPreviewData}
+                  onUploadingChangeAction={handleAttachmentsUploadingChange}
+                  onUploadAction={handleAttachmentUpload}
+                  onDeleteUploadAction={handleAttachmentDelete}
                 />
               </div>
             </AccordionContent>
@@ -518,7 +576,7 @@ export function TransactionCreateForm() {
           <SubmitButton
             isSubmitting={createTransactionMutation.isPending}
             className="w-full"
-            disabled={!form.formState.isDirty}
+            disabled={!form.formState.isDirty || isUploadingAttachments}
           >
             Create
           </SubmitButton>

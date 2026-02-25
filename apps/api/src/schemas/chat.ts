@@ -1,5 +1,6 @@
 import type { UIChatMessage } from "@api/ai/types";
 import { z } from "@hono/zod-openapi";
+import { isValidTimezone } from "@midday/location/timezones";
 
 // Create a Zod schema that validates UIChatMessage structure
 const messageSchema = z
@@ -40,6 +41,32 @@ const messageSchema = z
     },
   });
 
+/**
+ * Dashboard metrics filter schema - sent with every chat request
+ * to provide context about the current dashboard view.
+ */
+export const metricsFilterSchema = z
+  .object({
+    period: z.string().describe("Period option (e.g., '1-year', '6-months')"),
+    from: z.string().describe("Start date in yyyy-MM-dd format"),
+    to: z.string().describe("End date in yyyy-MM-dd format"),
+    currency: z.string().optional().describe("Currency code (e.g., 'USD')"),
+    revenueType: z
+      .enum(["gross", "net"])
+      .describe("Revenue type for calculations"),
+  })
+  .openapi({
+    description:
+      "Current dashboard metrics filter state - used as defaults for AI tools",
+    example: {
+      period: "1-year",
+      from: "2025-01-21",
+      to: "2026-01-21",
+      currency: "USD",
+      revenueType: "net",
+    },
+  });
+
 export const chatRequestSchema = z.object({
   id: z.string().openapi({
     description: "Chat ID",
@@ -60,10 +87,17 @@ export const chatRequestSchema = z.object({
     description: "User's city",
     example: "San Francisco",
   }),
-  timezone: z.string().optional().openapi({
-    description: "User's timezone",
-    example: "America/New_York",
-  }),
+  timezone: z
+    .string()
+    .refine(isValidTimezone, {
+      message:
+        "Invalid timezone. Use IANA timezone format (e.g., 'America/New_York', 'UTC')",
+    })
+    .optional()
+    .openapi({
+      description: "User's timezone",
+      example: "America/New_York",
+    }),
   agentChoice: z.string().optional().openapi({
     description: "Agent choice",
     example: "general",
@@ -71,6 +105,10 @@ export const chatRequestSchema = z.object({
   toolChoice: z.string().optional().openapi({
     description: "Tool choice",
     example: "getBurnRate",
+  }),
+  metricsFilter: metricsFilterSchema.optional().openapi({
+    description:
+      "Current dashboard metrics filter state - tools use this as default",
   }),
   files: z
     .array(

@@ -1,13 +1,5 @@
 "use client";
 
-import { useJobStatus } from "@/hooks/use-job-status";
-import { useReviewTransactions } from "@/hooks/use-review-transactions";
-import { useTeamMutation, useTeamQuery } from "@/hooks/use-team";
-import { useUserQuery } from "@/hooks/use-user";
-import { useZodForm } from "@/hooks/use-zod-form";
-import { useExportStore } from "@/store/export";
-import { useTransactionsStore } from "@/store/transactions";
-import { useTRPC } from "@/trpc/client";
 import {
   Accordion,
   AccordionContent,
@@ -39,6 +31,13 @@ import NumberFlow from "@number-flow/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { z } from "zod/v3";
+import { useJobStatus } from "@/hooks/use-job-status";
+import { useTeamMutation, useTeamQuery } from "@/hooks/use-team";
+import { useUserQuery } from "@/hooks/use-user";
+import { useZodForm } from "@/hooks/use-zod-form";
+import { useExportStore } from "@/store/export";
+import { useTransactionsStore } from "@/store/transactions";
+import { useTRPC } from "@/trpc/client";
 
 const exportSettingsSchema = z
   .object({
@@ -46,6 +45,7 @@ const exportSettingsSchema = z
     includeCSV: z.boolean(),
     includeXLSX: z.boolean(),
     sendEmail: z.boolean(),
+    sendCopyToMe: z.boolean().optional().default(false),
     accountantEmail: z.string().optional(),
   })
   .refine(
@@ -68,6 +68,15 @@ const exportSettingsSchema = z
     message: "Please select at least one export format",
   });
 
+const exportSettingsDefaults = {
+  csvDelimiter: ",",
+  includeCSV: true,
+  includeXLSX: true,
+  sendEmail: false,
+  sendCopyToMe: false,
+  accountantEmail: "",
+};
+
 interface ExportTransactionsModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
@@ -86,19 +95,10 @@ export function ExportTransactionsModal({
   const teamMutation = useTeamMutation();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const { transactionIds: reviewTransactionIds } = useReviewTransactions();
-
-  // Get transaction IDs - either from selection or all review transactions
-  const selectedIds = Object.keys(rowSelection);
-  const hasManualSelection = selectedIds.length > 0;
-
-  // Get IDs for export - either selected or all review transactions (with user filters applied)
+  // Get transaction IDs - only manually selected transactions
   const transactionIds = useMemo(() => {
-    if (hasManualSelection) {
-      return selectedIds;
-    }
-    return reviewTransactionIds;
-  }, [hasManualSelection, selectedIds, reviewTransactionIds]);
+    return Object.keys(rowSelection);
+  }, [rowSelection]);
 
   const totalCount = transactionIds.length;
 
@@ -137,26 +137,24 @@ export function ExportTransactionsModal({
     trpc.transactions.getReviewCount,
   ]);
 
-  // Load saved settings from team
-  const savedSettings = (team?.exportSettings as z.infer<
-    typeof exportSettingsSchema
-  >) || {
-    csvDelimiter: ",",
-    includeCSV: true,
-    includeXLSX: true,
-    sendEmail: false,
-    accountantEmail: "",
-  };
+  const savedSettings = team?.exportSettings
+    ? {
+        ...exportSettingsDefaults,
+        ...(team.exportSettings as z.infer<typeof exportSettingsSchema>),
+      }
+    : exportSettingsDefaults;
 
   const form = useZodForm(exportSettingsSchema, {
     defaultValues: savedSettings,
     mode: "onChange",
   });
 
-  // Update form when team data changes
   useEffect(() => {
     if (team?.exportSettings) {
-      form.reset(team.exportSettings as z.infer<typeof exportSettingsSchema>);
+      form.reset({
+        ...exportSettingsDefaults,
+        ...(team.exportSettings as z.infer<typeof exportSettingsSchema>),
+      });
     }
   }, [team?.exportSettings, form]);
 
@@ -195,6 +193,7 @@ export function ExportTransactionsModal({
   };
 
   const isExporting =
+    form.formState.isSubmitting ||
     exportMutation.isPending ||
     jobStatus === "active" ||
     jobStatus === "waiting";
@@ -387,6 +386,28 @@ export function ExportTransactionsModal({
                     )}
                   />
                 )}
+
+                <div className={sendEmail ? undefined : "hidden"}>
+                  <FormField
+                    control={form.control}
+                    name="sendCopyToMe"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="flex items-center justify-between">
+                          <FormLabel className="text-sm font-normal">
+                            Send a copy to me
+                          </FormLabel>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </div>
 
               <Separator />
@@ -409,7 +430,7 @@ export function ExportTransactionsModal({
                     transactionIds.length === 0
                   }
                 >
-                  {exportMutation.isPending ? (
+                  {isExporting ? (
                     <div className="flex items-center space-x-2">
                       <Spinner className="size-4" />
                       <span>Exporting...</span>

@@ -1,20 +1,31 @@
-import { useTRPC } from "@/trpc/client";
 import { Icons } from "@midday/ui/icons";
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { useRouter } from "next/navigation";
+import { useTRPC } from "@/trpc/client";
 import { BaseWidget } from "./base";
 import { WIDGET_POLLING_CONFIG } from "./widget-config";
+import { WidgetSkeleton } from "./widget-skeleton";
 
 export function VaultWidget() {
   const trpc = useTRPC();
   const router = useRouter();
 
   // Fetch recent document activity
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     ...trpc.widgets.getVaultActivity.queryOptions({ limit: 3 }),
     ...WIDGET_POLLING_CONFIG,
   });
+
+  if (isLoading) {
+    return (
+      <WidgetSkeleton
+        title="File Management"
+        icon={<Icons.Vault className="size-4" />}
+        showValue={false}
+      />
+    );
+  }
 
   const documents = data?.result?.data ?? [];
   const totalDocuments = data?.result?.total ?? 0;
@@ -93,7 +104,7 @@ export function VaultWidget() {
     return `${classifiedDocs.length} files automatically categorized as ${classificationArray[0]}, ${classificationArray[1]} and others`;
   };
 
-  const getRecentFileName = () => {
+  const _getRecentFileName = () => {
     if (documents.length === 0) return null;
 
     const recentDoc = documents[0];

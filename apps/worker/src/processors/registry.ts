@@ -1,11 +1,20 @@
+import { createLoggerWithContext } from "@midday/logger";
 import type { Job } from "bullmq";
 import { isDevelopment } from "../utils/env";
+
+const logger = createLoggerWithContext("worker:registry");
+
 import { accountingProcessors } from "./accounting";
+import { customerProcessors } from "./customers";
 import { documentProcessors } from "./documents";
 import { embeddingsProcessors } from "./embeddings";
 import { inboxProcessors } from "./inbox";
+import { insightsProcessors } from "./insights";
+import { institutionsProcessors } from "./institutions";
 import { invoiceProcessors } from "./invoices";
+import { notificationProcessors } from "./notifications";
 import { ratesProcessors } from "./rates";
+import { teamProcessors } from "./teams";
 import { transactionProcessors } from "./transactions";
 
 /**
@@ -42,6 +51,11 @@ for (const [jobName, processor] of Object.entries(ratesProcessors)) {
   processors.set(jobName, processor);
 }
 
+// Register institutions processors
+for (const [jobName, processor] of Object.entries(institutionsProcessors)) {
+  processors.set(jobName, processor);
+}
+
 // Register accounting processors
 for (const [jobName, processor] of Object.entries(accountingProcessors)) {
   processors.set(jobName, processor);
@@ -52,9 +66,31 @@ for (const [jobName, processor] of Object.entries(invoiceProcessors)) {
   processors.set(jobName, processor);
 }
 
+// Register customer processors
+for (const [jobName, processor] of Object.entries(customerProcessors)) {
+  processors.set(jobName, processor);
+}
+
+// Register team processors
+for (const [jobName, processor] of Object.entries(teamProcessors)) {
+  processors.set(jobName, processor);
+}
+
+// Register insights processors
+for (const [jobName, processor] of Object.entries(insightsProcessors)) {
+  processors.set(jobName, processor);
+}
+
+// Register notification processors
+for (const [jobName, processor] of Object.entries(notificationProcessors)) {
+  processors.set(jobName, processor);
+}
+
 // Debug: Log all registered processors
 if (isDevelopment()) {
-  console.log("Registered processors:", Array.from(processors.keys()));
+  logger.info("Registered processors", {
+    processors: Array.from(processors.keys()),
+  });
 }
 
 /**
@@ -63,9 +99,11 @@ if (isDevelopment()) {
 export function getProcessor(jobName: string) {
   const processor = processors.get(jobName);
   if (!processor) {
-    console.error(
+    logger.error(
       `Processor not found for job: ${jobName}. Available processors:`,
-      Array.from(processors.keys()),
+      {
+        availableProcessors: Array.from(processors.keys()),
+      },
     );
   }
   return processor;

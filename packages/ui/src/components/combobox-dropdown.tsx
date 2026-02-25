@@ -1,9 +1,8 @@
 "use client";
 
+import { CommandList } from "cmdk";
 import { Check, ChevronsUpDown } from "lucide-react";
 import * as React from "react";
-
-import { CommandList } from "cmdk";
 import { cn } from "../utils";
 import { Button } from "./button";
 import {
@@ -39,6 +38,8 @@ type Props<T> = {
   onCreate?: (value: string) => void;
   headless?: boolean;
   className?: string;
+  triggerClassName?: string;
+  listClassName?: string;
   modal?: boolean;
 };
 
@@ -57,6 +58,8 @@ export function ComboboxDropdown<T extends ComboboxItem>({
   disabled,
   onCreate,
   className,
+  triggerClassName,
+  listClassName,
   modal = true,
 }: Props<T>) {
   const [open, setOpen] = React.useState(false);
@@ -83,7 +86,9 @@ export function ComboboxDropdown<T extends ComboboxItem>({
       />
 
       <CommandGroup>
-        <CommandList className="max-h-[225px] overflow-auto">
+        <CommandList
+          className={cn("max-h-[225px] overflow-auto", listClassName)}
+        >
           {filteredItems.map((item) => {
             const isChecked = selectedItem?.id === item.id;
 
@@ -156,7 +161,10 @@ export function ComboboxDropdown<T extends ComboboxItem>({
         <Button
           variant="outline"
           aria-expanded={open}
-          className="w-full justify-between relative font-normal"
+          className={cn(
+            "w-full justify-between relative font-normal",
+            triggerClassName,
+          )}
         >
           <span className="truncate text-ellipsis pr-3">
             {selectedItem ? (

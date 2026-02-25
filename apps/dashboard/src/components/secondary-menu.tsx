@@ -21,9 +21,9 @@ export function SecondaryMenu({ items }: Props) {
       <ul className="flex space-x-6 text-sm overflow-auto scrollbar-hide">
         {items.map((item) => (
           <Link
-            prefetch
             key={item.path}
             href={item.path}
+            prefetch
             className={cn(
               "text-[#606060]",
               pathname === item.path &&

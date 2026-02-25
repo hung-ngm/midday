@@ -1,12 +1,9 @@
 "use client";
 
-import { revalidateAfterTeamChange } from "@/actions/revalidate-action";
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
 import { Avatar, AvatarFallback, AvatarImageNext } from "@midday/ui/avatar";
 import { Button } from "@midday/ui/button";
-import { cn } from "@midday/ui/cn";
 import { Icons } from "@midday/ui/icons";
+import { Skeleton } from "@midday/ui/skeleton";
 import {
   Tooltip,
   TooltipContent,
@@ -18,10 +15,28 @@ import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useOnClickOutside } from "usehooks-ts";
+import { revalidateAfterTeamChange } from "@/actions/revalidate-action";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
 
 type Props = {
   isExpanded?: boolean;
 };
+
+function TeamDropdownSkeleton({ isExpanded }: { isExpanded: boolean }) {
+  return (
+    <div className="relative h-[32px]">
+      <div className="fixed left-[19px] bottom-4 w-[32px] h-[32px]">
+        <Skeleton className="w-[32px] h-[32px] rounded-none" />
+      </div>
+      {isExpanded && (
+        <div className="fixed left-[62px] bottom-4 h-[32px] flex items-center">
+          <Skeleton className="h-4 w-24" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function TeamDropdown({ isExpanded = false }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -36,7 +51,7 @@ export function TeamDropdown({ isExpanded = false }: Props) {
   const [isChangingTeam, setIsChangingTeam] = useState(false);
 
   const changeTeamMutation = useMutation(
-    trpc.user.update.mutationOptions({
+    trpc.user.switchTeam.mutationOptions({
       onSuccess: async () => {
         await queryClient.invalidateQueries();
         setIsChangingTeam(false);
@@ -45,7 +60,9 @@ export function TeamDropdown({ isExpanded = false }: Props) {
     }),
   );
 
-  const { data: teams } = useQuery(trpc.team.list.queryOptions());
+  const { data: teams, isLoading: isTeamsLoading } = useQuery(
+    trpc.team.list.queryOptions(),
+  );
 
   useEffect(() => {
     if (user?.team?.id) {
@@ -69,6 +86,12 @@ export function TeamDropdown({ isExpanded = false }: Props) {
   });
 
   const toggleActive = () => setActive((prev) => !prev);
+
+  // Show skeleton while teams are loading
+  // Note: user loading is handled by Suspense since useUserQuery uses useSuspenseQuery
+  if (isTeamsLoading) {
+    return <TeamDropdownSkeleton isExpanded={isExpanded} />;
+  }
 
   const handleTeamChange = (teamId: string) => {
     if (teamId === selectedId) {
@@ -103,7 +126,7 @@ export function TeamDropdown({ isExpanded = false }: Props) {
                     mass: 1.2,
                   }}
                 >
-                  <Link href="/teams/create" onClick={() => setActive(false)}>
+                  <Link href="/onboarding" onClick={() => setActive(false)}>
                     <Button
                       className="w-[32px] h-[32px] bg-background"
                       size="icon"

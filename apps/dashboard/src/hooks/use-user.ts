@@ -1,15 +1,18 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTRPC } from "@/trpc/client";
-import {
-  useMutation,
-  useQueryClient,
-  useSuspenseQuery,
-} from "@tanstack/react-query";
 
 export function useUserQuery() {
   const trpc = useTRPC();
-  return useSuspenseQuery(trpc.user.me.queryOptions());
+  // useQuery instead of useSuspenseQuery so components outside a Suspense
+  // boundary don't blank the page during hydration. Data is always
+  // pre-fetched by the (sidebar) layout which awaits user.me.
+  const result = useQuery({
+    ...trpc.user.me.queryOptions(),
+    refetchInterval: 6 * 60 * 60 * 1000,
+  });
+  return result as typeof result & { data: NonNullable<typeof result.data> };
 }
 
 export function useUserMutation() {

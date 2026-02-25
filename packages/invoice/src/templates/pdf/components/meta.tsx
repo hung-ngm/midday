@@ -27,7 +27,9 @@ export function Meta({
 }: MetaProps) {
   return (
     <View>
-      <Text style={{ fontSize: 21, fontWeight: 500, marginBottom: 8 }}>
+      <Text
+        style={{ fontSize: 21, fontWeight: 500, marginBottom: 8, maxLines: 2 }}
+      >
         {title}
       </Text>
       <View style={{ flexDirection: "column", gap: 4 }}>
@@ -42,9 +44,7 @@ export function Meta({
             {issueDateLabel ? `${issueDateLabel}:` : ""}
           </Text>
           <Text style={{ fontSize: 9 }}>
-            {issueDate
-              ? format(new TZDate(issueDate, timezone), dateFormat)
-              : ""}
+            {issueDate ? format(new TZDate(issueDate, "UTC"), dateFormat) : ""}
           </Text>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -52,7 +52,7 @@ export function Meta({
             {dueDateLabel ? `${dueDateLabel}:` : ""}
           </Text>
           <Text style={{ fontSize: 9 }}>
-            {dueDate ? format(new TZDate(dueDate, timezone), dateFormat) : ""}
+            {dueDate ? format(new TZDate(dueDate, "UTC"), dateFormat) : ""}
           </Text>
         </View>
       </View>

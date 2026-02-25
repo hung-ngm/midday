@@ -1,166 +1,97 @@
-import Redis from "ioredis";
+import { createLoggerWithContext } from "@midday/logger";
 
-let redisConnection: Redis | null = null;
-let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
-
-/**
- * Connection state tracking
- */
-let connectionState:
-  | "connecting"
-  | "connected"
-  | "ready"
-  | "reconnecting"
-  | "disconnected" = "disconnected";
+const logger = createLoggerWithContext("worker:config");
 
 const isProduction =
-  process.env.NODE_ENV === "production" || process.env.FLY_APP_NAME;
+  process.env.NODE_ENV === "production" ||
+  process.env.RAILWAY_ENVIRONMENT === "production";
 
 /**
- * Get or create Redis connection for BullMQ
- * Uses REDIS_QUEUE_URL (separate from cache Redis)
+ * Parse Redis URL and return connection options for BullMQ
+ * BullMQ will create and manage its own Redis connections
  */
-export function getRedisConnection(): Redis {
-  if (redisConnection) {
-    return redisConnection;
-  }
-
+function parseRedisUrl() {
   const redisUrl = process.env.REDIS_QUEUE_URL;
 
   if (!redisUrl) {
     throw new Error("REDIS_QUEUE_URL environment variable is required");
   }
 
-  redisConnection = new Redis(redisUrl, {
-    maxRetriesPerRequest: null, // Required for BullMQ
-    enableReadyCheck: false, // BullMQ handles this
-    // Connect eagerly for workers - fail fast if Redis is unavailable
-    // Workers need Redis immediately to process jobs
-    lazyConnect: false,
-    family: isProduction ? 6 : 4, // IPv6 for Fly.io production, IPv4 for local
-    keepAlive: 30000, // Keep connection alive with 30s keepAlive to prevent idle timeouts
-    ...(isProduction && {
-      // Production settings for Upstash/Fly.io
-      connectTimeout: 15000, // Longer timeout for Upstash
-      retryStrategy: (times) => {
-        // Always return a number to ensure infinite retries
-        // Exponential backoff: 50ms, 100ms, 150ms... up to 2000ms max
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      enableOfflineQueue: false, // Don't queue commands when offline
+  const url = new URL(redisUrl);
+
+  return {
+    host: url.hostname,
+    port: Number(url.port) || 6379,
+    password: url.password || undefined,
+    username: url.username || undefined,
+    // TLS for production (rediss://)
+    ...(url.protocol === "rediss:" && {
+      tls: {},
     }),
-  });
-
-  // Connection state event handlers
-  redisConnection.on("error", (err) => {
-    console.error("[Redis Queue] Connection error:", err);
-    connectionState = "disconnected";
-  });
-
-  redisConnection.on("connect", () => {
-    console.log("[Redis Queue] Connected");
-    connectionState = "connected";
-  });
-
-  redisConnection.on("ready", () => {
-    console.log("[Redis Queue] Ready");
-    connectionState = "ready";
-
-    // Start periodic keep-alive ping when connection is ready
-    if (keepAliveInterval) {
-      clearInterval(keepAliveInterval);
-    }
-
-    keepAliveInterval = setInterval(async () => {
-      if (redisConnection && connectionState === "ready") {
-        try {
-          await redisConnection.ping();
-        } catch (error) {
-          console.error("[Redis Queue] Keep-alive ping failed:", error);
-        }
-      }
-    }, 30000); // Ping every 30 seconds
-  });
-
-  redisConnection.on("reconnecting", (delay: number) => {
-    console.log(`[Redis Queue] Reconnecting in ${delay}ms...`);
-    connectionState = "reconnecting";
-  });
-
-  redisConnection.on("close", () => {
-    console.log("[Redis Queue] Connection closed");
-    connectionState = "disconnected";
-
-    // Clear keep-alive interval when connection closes
-    if (keepAliveInterval) {
-      clearInterval(keepAliveInterval);
-      keepAliveInterval = null;
-    }
-  });
-
-  redisConnection.on("end", () => {
-    console.log("[Redis Queue] Connection ended");
-    connectionState = "disconnected";
-
-    // Clear keep-alive interval when connection ends
-    if (keepAliveInterval) {
-      clearInterval(keepAliveInterval);
-      keepAliveInterval = null;
-    }
-  });
-
-  return redisConnection;
+  };
 }
 
 /**
- * Create a separate Redis connection for FlowProducer
+ * Get Redis connection options for BullMQ queues and workers
+ * BullMQ will create its own connection with these options
+ *
+ * Based on BullMQ recommended settings:
+ * - maxRetriesPerRequest: null (required for Workers)
+ * - retryStrategy: exponential backoff (min 1s, max 20s)
+ * - enableOfflineQueue: true (Workers need to wait for reconnection)
+ * - reconnectOnError: auto-reconnect on READONLY (cluster failover)
+ *
+ * @see https://docs.bullmq.io/guide/going-to-production
+ */
+export function getRedisConnection() {
+  const baseOptions = parseRedisUrl();
+
+  return {
+    ...baseOptions,
+    // BullMQ required settings for Workers
+    maxRetriesPerRequest: null, // Required: retry indefinitely for Workers
+    enableReadyCheck: false,
+    // Network settings
+    lazyConnect: false,
+    family: 4,
+    keepAlive: 30000, // TCP keep-alive every 30s
+    connectTimeout: isProduction ? 15000 : 5000,
+    // BullMQ recommended retry strategy: exponential backoff
+    // 1s, 2s, 4s, 8s, 16s, then capped at 20s
+    retryStrategy: (times: number) => {
+      const delay = Math.min(1000 * 2 ** times, 20000);
+      if (times > 5) {
+        logger.info(
+          `[Redis/Worker] Reconnecting in ${delay}ms (attempt ${times})`,
+        );
+      }
+      return delay;
+    },
+    // Auto-reconnect on errors that indicate failover/upgrade
+    // READONLY: Redis is in replica mode during failover/upgrade
+    // ETIMEDOUT/timed out: Connection or script timed out (can happen during failover)
+    reconnectOnError: (err: Error) => {
+      const msg = err.message;
+      if (msg.includes("READONLY")) {
+        logger.info(
+          "[Redis/Worker] READONLY error detected (server upgrade/failover), reconnecting",
+        );
+        return true;
+      }
+      if (msg.includes("timed out") || msg.includes("ETIMEDOUT")) {
+        logger.info("[Redis/Worker] Timeout error detected, reconnecting");
+        return true;
+      }
+      return false;
+    },
+  };
+}
+
+/**
+ * Get Redis connection options for FlowProducer
  * BullMQ best practice: separate connections for Queue, Worker, and FlowProducer
  */
-export function getFlowRedisConnection(): Redis {
-  const redisUrl = process.env.REDIS_QUEUE_URL;
-
-  if (!redisUrl) {
-    throw new Error("REDIS_QUEUE_URL environment variable is required");
-  }
-
-  const connection = new Redis(redisUrl, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    lazyConnect: false,
-    family: isProduction ? 6 : 4, // IPv6 for Fly.io production, IPv4 for local
-    keepAlive: 30000, // Keep connection alive with 30s keepAlive to prevent idle timeouts
-    ...(isProduction && {
-      connectTimeout: 15000, // Longer timeout for Upstash
-      retryStrategy: (times) => {
-        // Always return a number to ensure infinite retries
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      enableOfflineQueue: false, // Don't queue commands when offline
-    }),
-  });
-
-  // Add event handlers for FlowProducer connection monitoring
-  connection.on("error", (err) => {
-    console.error("[Redis FlowProducer] Connection error:", err);
-  });
-
-  connection.on("connect", () => {
-    console.log("[Redis FlowProducer] Connected");
-  });
-
-  connection.on("ready", () => {
-    console.log("[Redis FlowProducer] Ready");
-  });
-
-  connection.on("reconnecting", (delay: number) => {
-    console.log(`[Redis FlowProducer] Reconnecting in ${delay}ms...`);
-  });
-
-  connection.on("close", () => {
-    console.log("[Redis FlowProducer] Connection closed");
-  });
-
-  return connection;
+export function getFlowRedisConnection() {
+  // Same options - BullMQ will create a separate connection
+  return getRedisConnection();
 }

@@ -10,19 +10,19 @@
   "scripts": {
     "clean": "rm -rf .turbo node_modules",
     "lint": "biome check .",
-    "format": "biome format --write .",
+    "lint:fix": "biome check --fix .",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@midday/db": "workspace:*",
     "@midday/email": "workspace:*",
     "@midday/inbox": "workspace:*",
-    "@midday/db": "workspace:*",
-    "nanoid": "^5.1.6",
-    "resend": "^6.5.2",
-    "zod": "^4.1.13"
+    "nanoid": "catalog:",
+    "resend": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@midday/tsconfig": "workspace:*",
-    "typescript": "^5.9.3"
+    "typescript": "catalog:"
   }
 }

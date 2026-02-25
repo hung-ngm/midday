@@ -1,7 +1,5 @@
 "use client";
 
-import { useSyncStatus } from "@/hooks/use-sync-status";
-import { useTRPC } from "@/trpc/client";
 import type { RouterOutputs } from "@api/trpc/routers/_app";
 import { Avatar, AvatarFallback } from "@midday/ui/avatar";
 import { Badge } from "@midday/ui/badge";
@@ -14,7 +12,12 @@ import {
   CardTitle,
 } from "@midday/ui/card";
 import { Icons } from "@midday/ui/icons";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@midday/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@midday/ui/tooltip";
 import { useToast } from "@midday/ui/use-toast";
 import {
   useMutation,
@@ -23,8 +26,9 @@ import {
 } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSyncStatus } from "@/hooks/use-sync-status";
+import { useTRPC } from "@/trpc/client";
 import { ConnectEmailModal } from "./connect-email-modal";
 import { ConnectGmail } from "./connect-gmail";
 import { ConnectOutlook } from "./connect-outlook";
@@ -164,20 +168,26 @@ function InboxAccountItem({ account }: { account: InboxAccount }) {
           <div className="flex items-center space-x-2">
             <span className="text-sm font-medium">{account.email}</span>
             {isDisconnected && (
-              <Tooltip delayDuration={0}>
-                <TooltipTrigger asChild>
-                  <Badge variant="tag-rounded" className="text-xs cursor-help">
-                    Disconnected
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-[300px] text-xs">
-                  <p>
-                    Account access has expired. Email providers typically expire
-                    access tokens periodically as part of their security
-                    practices. Simply reconnect to restore functionality.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
+              <TooltipProvider delayDuration={0}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge
+                      variant="tag-rounded"
+                      className="text-xs cursor-help"
+                    >
+                      Disconnected
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[300px] text-xs">
+                    <p>
+                      Account access has expired. Email providers typically
+                      expire access tokens periodically as part of their
+                      security practices. Simply reconnect to restore
+                      functionality.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
           </div>
           <span className="text-muted-foreground text-xs">

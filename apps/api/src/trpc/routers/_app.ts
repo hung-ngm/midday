@@ -5,6 +5,7 @@ import { apiKeysRouter } from "./api-keys";
 import { appsRouter } from "./apps";
 import { bankAccountsRouter } from "./bank-accounts";
 import { bankConnectionsRouter } from "./bank-connections";
+import { bankingRouter } from "./banking";
 import { billingRouter } from "./billing";
 import { chatsRouter } from "./chats";
 import { customersRouter } from "./customers";
@@ -14,10 +15,12 @@ import { documentsRouter } from "./documents";
 import { chatFeedbackRouter } from "./feedback";
 import { inboxRouter } from "./inbox";
 import { inboxAccountsRouter } from "./inbox-accounts";
+import { insightsRouter } from "./insights";
 import { institutionsRouter } from "./institutions";
 import { invoiceRouter } from "./invoice";
 import { invoicePaymentsRouter } from "./invoice-payments";
 import { invoiceProductsRouter } from "./invoice-products";
+import { invoiceRecurringRouter } from "./invoice-recurring";
 import { invoiceTemplateRouter } from "./invoice-template";
 import { jobsRouter } from "./jobs";
 import { notificationSettingsRouter } from "./notification-settings";
@@ -40,6 +43,7 @@ import { widgetsRouter } from "./widgets";
 
 export const appRouter = createTRPCRouter({
   accounting: accountingRouter,
+  banking: bankingRouter,
   notifications: notificationsRouter,
   notificationSettings: notificationSettingsRouter,
   apps: appsRouter,
@@ -53,12 +57,14 @@ export const appRouter = createTRPCRouter({
   chatFeedback: chatFeedbackRouter,
   inbox: inboxRouter,
   inboxAccounts: inboxAccountsRouter,
+  insights: insightsRouter,
   institutions: institutionsRouter,
   invoice: invoiceRouter,
   invoicePayments: invoicePaymentsRouter,
-  jobs: jobsRouter,
   invoiceProducts: invoiceProductsRouter,
+  invoiceRecurring: invoiceRecurringRouter,
   invoiceTemplate: invoiceTemplateRouter,
+  jobs: jobsRouter,
   reports: reportsRouter,
   oauthApplications: oauthApplicationsRouter,
   billing: billingRouter,

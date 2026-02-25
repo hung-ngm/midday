@@ -1,20 +1,5 @@
 "use client";
 
-import {
-  invoiceFilterOutputSchema,
-  invoiceFilterSchema,
-} from "@/app/api/ai/filters/invoices/schema";
-import type { InvoiceFilterSchema } from "@/app/api/ai/filters/invoices/schema";
-import {
-  mapStringArrayToIds,
-  normalizeString,
-  useAIFilter,
-  validateEnumArray,
-} from "@/hooks/use-ai-filter";
-import { useInvoiceFilterParams } from "@/hooks/use-invoice-filter-params";
-import { useI18n } from "@/locales/client";
-import { useTRPC } from "@/trpc/client";
-import { Calendar } from "@midday/ui/calendar";
 import { cn } from "@midday/ui/cn";
 import {
   DropdownMenu,
@@ -31,9 +16,12 @@ import {
 import { Icons } from "@midday/ui/icons";
 import { Input } from "@midday/ui/input";
 import { useQuery } from "@tanstack/react-query";
-import { formatISO } from "date-fns";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
+import { useInvoiceFilterParams } from "@/hooks/use-invoice-filter-params";
+import { useI18n } from "@/locales/client";
+import { useTRPC } from "@/trpc/client";
+import { DateRangeFilter } from "./date-range-filter";
 import { FilterList } from "./filter-list";
 
 const allowedStatuses = [
@@ -62,58 +50,6 @@ export function InvoiceSearchFilter() {
     // @ts-expect-error
     name: t(`invoice_status.${status}`),
   }));
-
-  const mapInvoiceFilters = useCallback(
-    (
-      object: InvoiceFilterSchema,
-      data?: { customersData?: { data?: Array<{ id: string; name: string }> } },
-    ) => {
-      const statuses = Array.isArray(object.statuses)
-        ? validateEnumArray(object.statuses, [
-            "draft",
-            "overdue",
-            "paid",
-            "unpaid",
-            "canceled",
-            "refunded",
-          ] as const)
-        : normalizeString(object.statuses)
-          ? validateEnumArray([object.statuses], [
-              "draft",
-              "overdue",
-              "paid",
-              "unpaid",
-              "canceled",
-              "refunded",
-            ] as const)
-          : null;
-
-      const customerIds = mapStringArrayToIds(
-        object.customers,
-        (name) =>
-          data?.customersData?.data?.find((customer) => customer.name === name)
-            ?.id ?? null,
-      );
-
-      return {
-        q: normalizeString(object.name),
-        statuses,
-        customers: customerIds,
-        start: normalizeString(object.start),
-        end: normalizeString(object.end),
-      };
-    },
-    [],
-  );
-
-  const { submit, isLoading } = useAIFilter({
-    api: "/api/ai/filters/invoices",
-    inputSchema: invoiceFilterSchema,
-    outputSchema: invoiceFilterOutputSchema,
-    mapper: mapInvoiceFilters,
-    onFilterApplied: setFilter,
-    data: { customersData },
-  });
 
   useHotkeys(
     "esc",
@@ -144,23 +80,9 @@ export function InvoiceSearchFilter() {
     }
   };
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-
-    if (input.split(" ").length > 1) {
-      const context = `Invoice payment statuses: ${statusFilters.map((filter) => filter.name).join(", ")}
-         Customers: ${customersData?.data?.map((customer) => customer.name).join(", ")}
-      `;
-
-      submit({
-        input,
-        context,
-        currentDate: formatISO(new Date(), { representation: "date" }),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      });
-    } else {
-      setFilter({ q: input.length > 0 ? input : null });
-    }
+    setFilter({ q: input.length > 0 ? input : null });
   };
 
   const validFilters = Object.fromEntries(
@@ -184,7 +106,7 @@ export function InvoiceSearchFilter() {
           <Icons.Search className="absolute pointer-events-none left-3 top-[11px]" />
           <Input
             ref={inputRef}
-            placeholder="Search or filter"
+            placeholder="Search invoices..."
             className="pl-9 w-full sm:w-[350px] pr-8"
             value={input}
             onChange={handleSearch}
@@ -211,7 +133,6 @@ export function InvoiceSearchFilter() {
 
         <FilterList
           filters={validFilters}
-          loading={isLoading}
           onRemove={setFilter}
           statusFilters={statusFilters}
           customers={customersData?.data}
@@ -237,23 +158,10 @@ export function InvoiceSearchFilter() {
                 alignOffset={-4}
                 className="p-0"
               >
-                <Calendar
-                  mode="range"
-                  initialFocus
-                  selected={{
-                    from: filter?.start ? new Date(filter.start) : undefined,
-                    to: filter?.end ? new Date(filter.end) : undefined,
-                  }}
-                  onSelect={(range) => {
-                    setFilter({
-                      start: range?.from
-                        ? formatISO(range.from, { representation: "date" })
-                        : null,
-                      end: range?.to
-                        ? formatISO(range.to, { representation: "date" })
-                        : null,
-                    });
-                  }}
+                <DateRangeFilter
+                  start={filter?.start}
+                  end={filter?.end}
+                  onSelect={setFilter}
                 />
               </DropdownMenuSubContent>
             </DropdownMenuPortal>
@@ -270,7 +178,7 @@ export function InvoiceSearchFilter() {
               <DropdownMenuSubContent
                 sideOffset={14}
                 alignOffset={-4}
-                className="p-0"
+                className="p-0 max-h-[300px] overflow-auto"
               >
                 {customersData?.data?.map((customer) => (
                   <DropdownMenuCheckboxItem
@@ -323,6 +231,43 @@ export function InvoiceSearchFilter() {
                     {status.name}
                   </DropdownMenuCheckboxItem>
                 ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuPortal>
+          </DropdownMenuSub>
+        </DropdownMenuGroup>
+
+        <DropdownMenuGroup>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Icons.Repeat className="mr-2 h-4 w-4" />
+              <span>Type</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuSubContent
+                sideOffset={14}
+                alignOffset={-4}
+                className="p-0"
+              >
+                <DropdownMenuCheckboxItem
+                  checked={filter?.recurring === true}
+                  onCheckedChange={(checked) => {
+                    setFilter({
+                      recurring: checked ? true : null,
+                    });
+                  }}
+                >
+                  Recurring
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={filter?.recurring === false}
+                  onCheckedChange={(checked) => {
+                    setFilter({
+                      recurring: checked ? false : null,
+                    });
+                  }}
+                >
+                  One-time
+                </DropdownMenuCheckboxItem>
               </DropdownMenuSubContent>
             </DropdownMenuPortal>
           </DropdownMenuSub>

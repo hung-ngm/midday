@@ -1,12 +1,11 @@
 "use client";
 
-import { useTRPC } from "@/trpc/client";
 import type { RouterOutputs } from "@api/trpc/routers/_app";
-import { Avatar, AvatarFallback } from "@midday/ui/avatar";
-import { AvatarImage } from "@midday/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@midday/ui/avatar";
 import { SubmitButton } from "@midday/ui/submit-button";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { useTRPC } from "@/trpc/client";
 
 type Props = {
   invite: RouterOutputs["team"]["invitesByEmail"][number];
@@ -17,8 +16,8 @@ export function TeamInvite({ invite }: Props) {
   const queryClient = useQueryClient();
   const router = useRouter();
 
-  const updateUserMutation = useMutation(
-    trpc.user.update.mutationOptions({
+  const switchTeamMutation = useMutation(
+    trpc.user.switchTeam.mutationOptions({
       onSuccess: async () => {
         await queryClient.invalidateQueries();
         router.push("/");
@@ -33,8 +32,8 @@ export function TeamInvite({ invite }: Props) {
           return;
         }
 
-        // Update the user's teamId
-        updateUserMutation.mutate({
+        // Switch to the newly joined team
+        switchTeamMutation.mutate({
           teamId: data.teamId,
         });
       },

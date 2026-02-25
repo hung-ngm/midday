@@ -1,19 +1,5 @@
 "use client";
 
-import { useLatestProjectId } from "@/hooks/use-latest-project-id";
-import { useTrackerParams } from "@/hooks/use-tracker-params";
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
-import { secondsToHoursAndMinutes } from "@/utils/format";
-import {
-  NEW_EVENT_ID,
-  calculateDuration,
-  createSafeDate,
-  formatHour,
-  getDates,
-  getSlotFromDate,
-  isValidTimeSlot,
-} from "@/utils/tracker";
 import type { RouterOutputs } from "@api/trpc/routers/_app";
 import { TZDate, tz } from "@date-fns/tz";
 import { UTCDate } from "@date-fns/utc";
@@ -33,11 +19,25 @@ import {
   endOfDay,
   format,
   isValid,
-  parseISO,
   startOfDay,
 } from "date-fns";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
+import { useLatestProjectId } from "@/hooks/use-latest-project-id";
+import { useTrackerParams } from "@/hooks/use-tracker-params";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
+import { parseDateAsUTC } from "@/utils/date";
+import { secondsToHoursAndMinutes } from "@/utils/format";
+import {
+  calculateDuration,
+  createSafeDate,
+  formatHour,
+  getDates,
+  getSlotFromDate,
+  isValidTimeSlot,
+  NEW_EVENT_ID,
+} from "@/utils/tracker";
 import { TrackerEntriesForm } from "./forms/tracker-entries-form";
 import { TrackerDaySelect } from "./tracker-day-select";
 
@@ -401,20 +401,24 @@ const createNewEvent = (
 ): TrackerRecord => {
   // Get base date for event
   let baseDate: Date;
+  let dateStr: string;
   if (selectedDate) {
-    baseDate = parseISO(selectedDate);
+    // Parse as UTC calendar date to avoid timezone shift
+    baseDate = parseDateAsUTC(selectedDate);
+    dateStr = selectedDate; // Use the original date string directly
   } else {
     const timezone = getUserTimezone(user);
     try {
       const now = new Date();
       const userTzDate = new TZDate(now, timezone);
       baseDate = startOfDay(userTzDate);
+      dateStr = format(userTzDate, "yyyy-MM-dd"); // Format in user's timezone
     } catch (error) {
       console.warn("Today calculation failed, using system date:", error);
       baseDate = new Date();
+      dateStr = format(baseDate, "yyyy-MM-dd");
     }
   }
-  const dateStr = format(baseDate, "yyyy-MM-dd");
   const timezone = getUserTimezone(user);
 
   // Convert slot to time
@@ -437,7 +441,7 @@ const createNewEvent = (
 
   return {
     id: NEW_EVENT_ID,
-    date: format(baseDate, "yyyy-MM-dd"),
+    date: dateStr,
     description: null,
     duration: 15 * 60,
     start: startDate.toISOString(),
@@ -494,6 +498,9 @@ const useTrackerData = (selectedDate: string | null) => {
         queryClient.invalidateQueries({
           queryKey: trpc.trackerProjects.get.infiniteQueryKey(),
         });
+        queryClient.invalidateQueries({
+          queryKey: trpc.widgets.getBillableHours.queryKey(),
+        });
         refetch();
       },
     }),
@@ -507,6 +514,9 @@ const useTrackerData = (selectedDate: string | null) => {
         });
         queryClient.invalidateQueries({
           queryKey: trpc.trackerProjects.get.infiniteQueryKey(),
+        });
+        queryClient.invalidateQueries({
+          queryKey: trpc.widgets.getBillableHours.queryKey(),
         });
         refetch();
 
@@ -572,7 +582,7 @@ export function TrackerSchedule() {
     eventId,
     setParams,
   } = useTrackerParams();
-  const { latestProjectId } = useLatestProjectId();
+  const { latestProjectId } = useLatestProjectId(user?.teamId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const trpc = useTRPC();
 
@@ -711,7 +721,8 @@ export function TrackerSchedule() {
 
   const getBaseDate = useCallback(() => {
     if (selectedDate) {
-      return parseISO(selectedDate);
+      // Parse as UTC calendar date to avoid timezone shift
+      return parseDateAsUTC(selectedDate);
     }
 
     // Get "today" in user's timezone, not browser timezone
@@ -737,8 +748,11 @@ export function TrackerSchedule() {
       description?: string;
     }) => {
       const baseDate = getBaseDate();
-      const dateStr = format(baseDate, "yyyy-MM-dd");
       const timezone = getUserTimezone(user);
+
+      // Use selectedDate directly if available to avoid timezone conversion issues
+      // Otherwise format baseDate (which is already timezone-aware from getBaseDate)
+      const dateStr = selectedDate || format(baseDate, "yyyy-MM-dd");
 
       // Handle next day stop time (e.g., 23:00-01:00)
       const startHour = Number.parseInt(
@@ -751,8 +765,12 @@ export function TrackerSchedule() {
       );
       const isNextDay = stopHour < startHour;
 
+      // For next day calculation, use parseDateAsUTC to properly add a day
+      const nextDayDate = selectedDate
+        ? parseDateAsUTC(selectedDate)
+        : baseDate;
       const stopDateStr = isNextDay
-        ? format(addDays(baseDate, 1), "yyyy-MM-dd")
+        ? format(addDays(nextDayDate, 1), "yyyy-MM-dd")
         : dateStr;
 
       // Convert user timezone input to UTC for storage
@@ -839,8 +857,8 @@ export function TrackerSchedule() {
         const start = Math.min(dragStartSlot, slot);
         const end = Math.max(dragStartSlot, slot);
 
-        // Use timezone-aware time creation instead of browser timezone
-        const dateStr = format(getBaseDate(), "yyyy-MM-dd");
+        // Use selectedDate directly if available to avoid timezone conversion issues
+        const dateStr = selectedDate || format(getBaseDate(), "yyyy-MM-dd");
         const timezone = getUserTimezone(user);
         const startHour = Math.floor(start / 4);
         const startMinute = (start % 4) * 15;
@@ -946,15 +964,11 @@ export function TrackerSchedule() {
   }, [handleMouseUp]);
 
   // Keyboard shortcuts
-  useHotkeys(
-    "backspace",
-    () => {
-      if (selectedEvent && selectedEvent.id !== NEW_EVENT_ID) {
-        handleDeleteEvent(selectedEvent.id);
-      }
-    },
-    [selectedEvent, handleDeleteEvent],
-  );
+  useHotkeys("backspace", () => {
+    if (selectedEvent && selectedEvent.id !== NEW_EVENT_ID) {
+      handleDeleteEvent(selectedEvent.id);
+    }
+  }, [selectedEvent, handleDeleteEvent]);
 
   const handleEventResizeStart = useCallback(
     (e: React.MouseEvent, event: TrackerRecord, type: "top" | "bottom") => {
@@ -1009,8 +1023,8 @@ export function TrackerSchedule() {
           formattedStartTimeStr = `${start.substring(0, 2)}:${start.substring(2)}`;
         }
 
-        // Use timezone-aware parsing instead of browser timezone
-        const dateStr = format(baseDate, "yyyy-MM-dd");
+        // Use selectedDate directly if available to avoid timezone conversion issues
+        const dateStr = selectedDate || format(baseDate, "yyyy-MM-dd");
         const timezone = getUserTimezone(user);
         const startTime = userTimeToUTC(
           dateStr,
@@ -1059,8 +1073,8 @@ export function TrackerSchedule() {
               if (/^\d{4}$/.test(start))
                 formattedStart = `${start.substring(0, 2)}:${start.substring(2)}`;
 
-              // Use timezone-aware parsing instead of browser timezone
-              const dateStr = format(baseDate, "yyyy-MM-dd");
+              // Use selectedDate directly if available to avoid timezone conversion issues
+              const dateStr = selectedDate || format(baseDate, "yyyy-MM-dd");
               const timezone = getUserTimezone(user);
               const parsedStart = userTimeToUTC(
                 dateStr,
@@ -1089,8 +1103,8 @@ export function TrackerSchedule() {
               if (/^\d{4}$/.test(end))
                 formattedEnd = `${end.substring(0, 2)}:${end.substring(2)}`;
 
-              // Use timezone-aware parsing instead of browser timezone
-              const dateStr = format(baseDate, "yyyy-MM-dd");
+              // Use selectedDate directly if available to avoid timezone conversion issues
+              const dateStr = selectedDate || format(baseDate, "yyyy-MM-dd");
               const timezone = getUserTimezone(user);
               const parsedEnd = userTimeToUTC(dateStr, formattedEnd, timezone);
 
@@ -1266,10 +1280,9 @@ export function TrackerSchedule() {
             // This is the first part of the entry (ends at midnight in user timezone)
             // Calculate end of day in user timezone, then convert back to UTC
             const timezone = getUserTimezone(user);
-            const nextDay = format(
-              addDays(parseISO(currentSelectedDate), 1),
-              "yyyy-MM-dd",
-            );
+            // Parse as UTC calendar date to avoid timezone shift when adding days
+            const currentDateUTC = parseDateAsUTC(currentSelectedDate);
+            const nextDay = format(addDays(currentDateUTC, 1), "yyyy-MM-dd");
             const endOfDayUtc = userTimeToUTC(nextDay, "00:00", timezone);
 
             const firstPartDuration = Math.round(
@@ -1447,7 +1460,7 @@ export function TrackerSchedule() {
 
       <TrackerDaySelect />
 
-      <ScrollArea ref={scrollRef} className="h-[calc(100vh-480px)] mt-8">
+      <ScrollArea ref={scrollRef} className="h-[calc(100vh-530px)] mt-8">
         <div className="flex text-[#878787] text-xs">
           <div className="w-20 flex-shrink-0 select-none">
             {hours.map((hour) => (

@@ -1,28 +1,40 @@
-import { useChatInterface } from "@/hooks/use-chat-interface";
-import { useMetricsFilter } from "@/hooks/use-metrics-filter";
-import { useTRPC } from "@/trpc/client";
 import { useChatActions, useChatId } from "@ai-sdk-tools/store";
 import { Icons } from "@midday/ui/icons";
 import { useQuery } from "@tanstack/react-query";
 import { endOfDay, startOfDay, subDays } from "date-fns";
 import { useRouter } from "next/navigation";
+import { useChatInterface } from "@/hooks/use-chat-interface";
+import { useMetricsFilter } from "@/hooks/use-metrics-filter";
+import { useTRPC } from "@/trpc/client";
 import { BaseWidget } from "./base";
+import { WidgetSkeleton } from "./widget-skeleton";
 
 export function InboxWidget() {
   const trpc = useTRPC();
-  const router = useRouter();
+  const _router = useRouter();
   const { sendMessage } = useChatActions();
   const chatId = useChatId();
   const { setChatId } = useChatInterface();
   const { currency } = useMetricsFilter();
 
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     ...trpc.widgets.getInboxStats.queryOptions({
       from: startOfDay(subDays(new Date(), 7)).toISOString(),
       to: endOfDay(new Date()).toISOString(),
       currency,
     }),
   });
+
+  if (isLoading) {
+    return (
+      <WidgetSkeleton
+        title="Inbox"
+        icon={<Icons.Inbox2 className="size-4" />}
+        descriptionLines={2}
+        showValue={false}
+      />
+    );
+  }
 
   const stats = data?.result;
 

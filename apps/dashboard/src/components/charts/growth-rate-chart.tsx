@@ -1,6 +1,5 @@
 "use client";
 
-import { formatAmount } from "@/utils/format";
 import {
   Bar,
   CartesianGrid,
@@ -11,9 +10,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatAmount } from "@/utils/format";
 import {
   commonChartConfig,
   createCompactTickFormatter,
+  getZeroInclusiveDomain,
   useChartMargin,
 } from "./chart-utils";
 
@@ -100,7 +101,7 @@ export function GrowthRateChart({
     <div className="w-full">
       {/* Chart */}
       <div style={{ height }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" debounce={1}>
           <ComposedChart
             data={data}
             margin={{ top: 6, right: 6, left: -marginLeft, bottom: 6 }}
@@ -144,7 +145,7 @@ export function GrowthRateChart({
               tickFormatter={(value) =>
                 `${value > 0 ? "+" : ""}${value.toFixed(0)}%`
               }
-              dataKey="growthRate"
+              domain={getZeroInclusiveDomain()}
             />
             <Tooltip
               content={<CustomTooltip currency={currency} locale={locale} />}

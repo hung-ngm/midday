@@ -1,18 +1,17 @@
 "use client";
 
+import { cn } from "@midday/ui/cn";
+import { useQuery } from "@tanstack/react-query";
+import { format, parseISO } from "date-fns";
+import { useMemo } from "react";
 import {
   CategoryExpenseDonutChart,
   grayShades,
 } from "@/components/charts/category-expense-donut-chart";
 import { useLongPress } from "@/hooks/use-long-press";
 import { useMetricsCustomize } from "@/hooks/use-metrics-customize";
-import { useOverviewTab } from "@/hooks/use-overview-tab";
 import { useTRPC } from "@/trpc/client";
 import { formatAmount } from "@/utils/format";
-import { cn } from "@midday/ui/cn";
-import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { useMemo } from "react";
 import { ShareMetricButton } from "../components/share-metric-button";
 
 interface CategoryExpensesCardProps {
@@ -32,7 +31,6 @@ export function CategoryExpensesCard({
   isCustomizing,
 }: CategoryExpensesCardProps) {
   const trpc = useTRPC();
-  const { isMetricsTab } = useOverviewTab();
   const { isCustomizing: metricsIsCustomizing, setIsCustomizing } =
     useMetricsCustomize();
 
@@ -43,14 +41,13 @@ export function CategoryExpensesCard({
   });
 
   // Get spending data for categories
-  const { data: spendingData } = useQuery({
-    ...trpc.reports.spending.queryOptions({
+  const { data: spendingData } = useQuery(
+    trpc.reports.spending.queryOptions({
       from,
       to,
       currency: currency,
     }),
-    enabled: isMetricsTab,
-  });
+  );
 
   const categoryDonutChartData = useMemo(() => {
     if (!spendingData || spendingData.length === 0) return [];
@@ -74,8 +71,8 @@ export function CategoryExpensesCard({
 
   const dateRangeDisplay = useMemo(() => {
     try {
-      const fromDate = new Date(from);
-      const toDate = new Date(to);
+      const fromDate = parseISO(from);
+      const toDate = parseISO(to);
       return `${format(fromDate, "MMM d")} - ${format(toDate, "MMM d, yyyy")}`;
     } catch {
       return "";
@@ -93,7 +90,7 @@ export function CategoryExpensesCard({
       <div className="mb-4 min-h-[140px]">
         <div className="flex items-start justify-between h-7">
           <h3 className="text-sm font-normal text-muted-foreground">
-            Category Expense Breakdown
+            Expenses by Category
           </h3>
           <div className="opacity-0 group-hover:opacity-100 group-has-[*[data-state=open]]:opacity-100 transition-opacity">
             <ShareMetricButton

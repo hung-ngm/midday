@@ -27,6 +27,7 @@ declare module "@tanstack/table-core" {
     // Vault table meta
     handleDelete?: (id: string) => void;
     handleShare?: (pathTokens: string[]) => void;
+    handleReprocess?: (id: string) => void;
 
     // Categories table meta
     deleteCategory?: (id: string) => void;
@@ -38,6 +39,7 @@ declare module "@tanstack/table-core" {
 
     // Customers table meta
     deleteCustomer?: (id: string) => void;
+    enrichCustomer?: (id: string) => void;
 
     // Products table meta
     onEdit?: (id: string) => void;

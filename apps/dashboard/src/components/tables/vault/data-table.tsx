@@ -1,5 +1,18 @@
 "use client";
 
+import { closestCenter, DndContext } from "@dnd-kit/core";
+import { Table, TableBody, TableCell, TableRow } from "@midday/ui/table";
+import { toast } from "@midday/ui/use-toast";
+import {
+  useMutation,
+  useQueryClient,
+  useSuspenseInfiniteQuery,
+} from "@tanstack/react-query";
+import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
+import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import { AnimatePresence } from "framer-motion";
+import { useCallback, useMemo, useRef } from "react";
+import { useCopyToClipboard, useDebounceCallback } from "usehooks-ts";
 import { VirtualRow } from "@/components/tables/core";
 import { NoResults } from "@/components/vault/empty-states";
 import { VaultGetStarted } from "@/components/vault/vault-get-started";
@@ -16,25 +29,15 @@ import { useUserQuery } from "@/hooks/use-user";
 import { useDocumentsStore } from "@/store/vault";
 import { useTRPC } from "@/trpc/client";
 import { STICKY_COLUMNS } from "@/utils/table-configs";
-import type { TableSettings } from "@/utils/table-settings";
-import { DndContext, closestCenter } from "@dnd-kit/core";
-import { Table, TableBody, TableCell, TableRow } from "@midday/ui/table";
-import {
-  useMutation,
-  useQueryClient,
-  useSuspenseInfiniteQuery,
-} from "@tanstack/react-query";
-import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { type VirtualItem, useVirtualizer } from "@tanstack/react-virtual";
-import { AnimatePresence } from "framer-motion";
-import { useCallback, useMemo, useRef } from "react";
-import { useCopyToClipboard, useDebounceCallback } from "usehooks-ts";
+import { getColumnIds, type TableSettings } from "@/utils/table-settings";
 import { BottomBar } from "./bottom-bar";
 import { columns } from "./columns";
 import { DataTableHeader } from "./data-table-header";
 
 // Stable reference for non-clickable columns (avoids recreation on each render)
 const NON_CLICKABLE_COLUMNS = new Set(["select", "tags", "actions"]);
+
+const COLUMN_IDS = getColumnIds(columns);
 
 type Props = {
   initialSettings?: Partial<TableSettings>;
@@ -64,6 +67,7 @@ export function DataTable({ initialSettings }: Props) {
   } = useTableSettings({
     tableId: "vault",
     initialSettings,
+    columnIds: COLUMN_IDS,
   });
 
   // Use the reusable table scroll hook
@@ -82,7 +86,7 @@ export function DataTable({ initialSettings }: Props) {
   } = useSuspenseInfiniteQuery(
     trpc.documents.get.infiniteQueryOptions(
       {
-        pageSize: 20,
+        pageSize: 24,
         ...filter,
       },
       {
@@ -91,7 +95,7 @@ export function DataTable({ initialSettings }: Props) {
     ),
   );
 
-  const documents = useMemo(() => {
+  const baseDocuments = useMemo(() => {
     return data?.pages.flatMap((page) => page.data) ?? [];
   }, [data]);
 
@@ -146,6 +150,22 @@ export function DataTable({ initialSettings }: Props) {
     }),
   );
 
+  const documents = baseDocuments;
+
+  const reprocessMutation = useMutation(
+    trpc.documents.reprocessDocument.mutationOptions({
+      onSuccess: () => {
+        queryClient.invalidateQueries({
+          queryKey: trpc.documents.get.infiniteQueryKey(),
+        });
+
+        queryClient.invalidateQueries({
+          queryKey: trpc.documents.get.queryKey(),
+        });
+      },
+    }),
+  );
+
   const handleDelete = useCallback(
     (id: string) => {
       deleteDocumentMutation.mutate({
@@ -165,6 +185,18 @@ export function DataTable({ initialSettings }: Props) {
     [shortLinkMutation],
   );
 
+  const handleReprocess = useCallback(
+    (id: string) => {
+      toast({
+        title: "Analyzing document",
+        description: "The document is being analyzed. This may take a moment.",
+        duration: 3000,
+      });
+      reprocessMutation.mutate({ id });
+    },
+    [reprocessMutation],
+  );
+
   const files = useMemo(() => {
     return documents.map((document) => document.pathTokens?.join("/") ?? "");
   }, [documents]);
@@ -176,8 +208,9 @@ export function DataTable({ initialSettings }: Props) {
     () => ({
       handleDelete,
       handleShare,
+      handleReprocess,
     }),
-    [handleDelete, handleShare],
+    [handleDelete, handleShare, handleReprocess],
   );
 
   const table = useReactTable({

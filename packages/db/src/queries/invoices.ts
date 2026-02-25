@@ -1,16 +1,4 @@
 import { UTCDate } from "@date-fns/utc";
-import type { Database } from "@db/client";
-import {
-  type activityTypeEnum,
-  customers,
-  exchangeRates,
-  invoiceStatusEnum,
-  invoiceTemplates,
-  invoices,
-  teams,
-  trackerEntries,
-  trackerProjects,
-} from "@db/schema";
 import { buildSearchQuery } from "@midday/db/utils/search-query";
 import { generateToken } from "@midday/invoice/token";
 import type { EditorDoc, LineItem } from "@midday/invoice/types";
@@ -22,24 +10,40 @@ import {
   format,
   parseISO,
   startOfMonth,
-  subMonths,
 } from "date-fns";
 import {
   and,
   asc,
+  count,
   desc,
   eq,
   gte,
   ilike,
   inArray,
   isNotNull,
+  isNull,
+  lt,
   lte,
   or,
   sql,
 } from "drizzle-orm";
 import type { SQL } from "drizzle-orm/sql/sql";
 import { v4 as uuidv4 } from "uuid";
+import type { Database, DatabaseOrTransaction } from "../client";
+import {
+  type activityTypeEnum,
+  customers,
+  invoiceRecurring,
+  invoiceStatusEnum,
+  invoices,
+  invoiceTemplates,
+  teams,
+  trackerEntries,
+  trackerProjects,
+  users,
+} from "../schema";
 import { logActivity } from "../utils/log-activity";
+import { getExchangeRatesBatch } from "./exhange-rates";
 
 export type Template = {
   id?: string; // Reference to invoice_templates table
@@ -81,6 +85,7 @@ export type Template = {
   deliveryType: "create" | "create_and_send" | "scheduled";
   locale: string;
   paymentEnabled?: boolean;
+  paymentTermsDays?: number;
 };
 
 export type GetInvoicesParams = {
@@ -93,6 +98,9 @@ export type GetInvoicesParams = {
   start?: string | null;
   end?: string | null;
   sort?: string[] | null;
+  ids?: string[] | null;
+  recurringIds?: string[] | null;
+  recurring?: boolean | null;
 };
 
 export async function getInvoices(db: Database, params: GetInvoicesParams) {
@@ -106,9 +114,29 @@ export async function getInvoices(db: Database, params: GetInvoicesParams) {
     start,
     end,
     customers: customerIds,
+    ids,
+    recurringIds,
+    recurring,
   } = params;
 
   const whereConditions: SQL[] = [eq(invoices.teamId, teamId)];
+
+  // Apply IDs filter
+  if (ids && ids.length > 0) {
+    whereConditions.push(inArray(invoices.id, ids));
+  }
+
+  // Apply recurring series IDs filter (shows all invoices from these recurring series)
+  if (recurringIds && recurringIds.length > 0) {
+    whereConditions.push(inArray(invoices.invoiceRecurringId, recurringIds));
+  }
+
+  // Apply recurring filter (shows all invoices that are/aren't part of a recurring series)
+  if (recurring === true) {
+    whereConditions.push(isNotNull(invoices.invoiceRecurringId));
+  } else if (recurring === false) {
+    whereConditions.push(isNull(invoices.invoiceRecurringId));
+  }
 
   // Apply status filter
   if (statuses && statuses.length > 0) {
@@ -138,7 +166,7 @@ export async function getInvoices(db: Database, params: GetInvoicesParams) {
   // Apply search query filter
   if (q) {
     // If the query is a number, search by amount
-    if (!Number.isNaN(Number.parseInt(q))) {
+    if (!Number.isNaN(Number.parseInt(q, 10))) {
       whereConditions.push(
         sql`${invoices.amount}::text = ${Number(q).toString()}`,
       );
@@ -199,10 +227,27 @@ export async function getInvoices(db: Database, params: GetInvoicesParams) {
       team: {
         name: teams.name,
       },
+      // Recurring invoice fields
+      invoiceRecurringId: invoices.invoiceRecurringId,
+      recurringSequence: invoices.recurringSequence,
+      recurring: {
+        id: invoiceRecurring.id,
+        status: invoiceRecurring.status,
+        frequency: invoiceRecurring.frequency,
+        frequencyInterval: invoiceRecurring.frequencyInterval,
+        endType: invoiceRecurring.endType,
+        endCount: invoiceRecurring.endCount,
+        invoicesGenerated: invoiceRecurring.invoicesGenerated,
+        nextScheduledAt: invoiceRecurring.nextScheduledAt,
+      },
     })
     .from(invoices)
     .leftJoin(customers, eq(invoices.customerId, customers.id))
     .leftJoin(teams, eq(invoices.teamId, teams.id))
+    .leftJoin(
+      invoiceRecurring,
+      eq(invoices.invoiceRecurringId, invoiceRecurring.id),
+    )
     .where(and(...whereConditions));
 
   // Apply sorting
@@ -315,10 +360,23 @@ export async function getInvoiceById(
         name: customers.name,
         website: customers.website,
         email: customers.email,
+        billingEmail: customers.billingEmail,
+        portalId: customers.portalId,
+        portalEnabled: customers.portalEnabled,
       },
       customerId: invoices.customerId,
       team: {
         name: teams.name,
+        email: teams.email,
+        stripeConnected:
+          sql<boolean>`${teams.stripeAccountId} IS NOT NULL AND ${teams.stripeConnectStatus} = 'connected'`.as(
+            "stripe_connected",
+          ),
+      },
+      user: {
+        email: users.email,
+        timezone: users.timezone,
+        locale: users.locale,
       },
       // Join to get the template name and isDefault from invoice_templates
       invoiceTemplate: {
@@ -326,11 +384,29 @@ export async function getInvoiceById(
         name: invoiceTemplates.name,
         isDefault: invoiceTemplates.isDefault,
       },
+      // Recurring invoice data
+      invoiceRecurringId: invoices.invoiceRecurringId,
+      recurringSequence: invoices.recurringSequence,
+      recurring: {
+        id: invoiceRecurring.id,
+        frequency: invoiceRecurring.frequency,
+        frequencyInterval: invoiceRecurring.frequencyInterval,
+        status: invoiceRecurring.status,
+        nextScheduledAt: invoiceRecurring.nextScheduledAt,
+        endType: invoiceRecurring.endType,
+        endCount: invoiceRecurring.endCount,
+        invoicesGenerated: invoiceRecurring.invoicesGenerated,
+      },
     })
     .from(invoices)
     .leftJoin(customers, eq(invoices.customerId, customers.id))
     .leftJoin(teams, eq(invoices.teamId, teams.id))
+    .leftJoin(users, eq(invoices.userId, users.id))
     .leftJoin(invoiceTemplates, eq(invoices.templateId, invoiceTemplates.id))
+    .leftJoin(
+      invoiceRecurring,
+      eq(invoices.invoiceRecurringId, invoiceRecurring.id),
+    )
     .where(
       and(
         eq(invoices.id, id),
@@ -470,7 +546,7 @@ export async function getPaymentStatus(
 
     // Weight: recent invoices (last 90 days) get higher weight
     const daysSinceDue = Math.abs(
-      (new Date().getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24),
+      (Date.now() - dueDate.getTime()) / (1000 * 60 * 60 * 24),
     );
     const weight = daysSinceDue <= 90 ? 1.5 : 1.0;
 
@@ -553,19 +629,71 @@ export async function searchInvoiceNumber(
   return result ?? null;
 }
 
+/**
+ * Generate the next invoice number for a team.
+ * Format: INV-XXXX (e.g., INV-0001, INV-0042)
+ *
+ * Logic:
+ * 1. Find the highest numeric suffix from existing invoice numbers
+ * 2. If found, increment by 1
+ * 3. If not found, count total invoices + 1
+ * 4. Pad to 4 digits with leading zeros
+ */
 export async function getNextInvoiceNumber(
-  db: Database,
+  db: DatabaseOrTransaction,
   teamId: string,
 ): Promise<string> {
-  const [row] = await db.executeOnReplica(
-    sql`SELECT get_next_invoice_number(${teamId}) AS next_invoice_number`,
-  );
+  const PREFIX = "INV-";
+  const PAD_LENGTH = 4;
 
-  if (!row) {
-    throw new Error("Failed to fetch next invoice number");
+  // Find the highest invoice number with a numeric suffix for this team
+  // Using raw SQL for the regex extraction since Drizzle doesn't support it natively
+  const maxInvoiceResult = await db
+    .select({ invoiceNumber: invoices.invoiceNumber })
+    .from(invoices)
+    .where(
+      and(
+        eq(invoices.teamId, teamId),
+        sql`${invoices.invoiceNumber} ~ '[0-9]+$'`,
+      ),
+    )
+    .orderBy(
+      sql`CAST(SUBSTRING(${invoices.invoiceNumber} FROM '[0-9]+$') AS INTEGER) DESC`,
+    )
+    .limit(1);
+
+  let nextNumber: number;
+
+  if (maxInvoiceResult.length > 0 && maxInvoiceResult[0]?.invoiceNumber) {
+    // Extract the numeric part from the invoice number
+    const match = maxInvoiceResult[0].invoiceNumber.match(/(\d+)$/);
+
+    if (match?.[1]) {
+      // Increment the numeric part
+      nextNumber = Number.parseInt(match[1], 10) + 1;
+    } else {
+      // Fallback: count total invoices + 1
+      const countResult = await db
+        .select({ count: count() })
+        .from(invoices)
+        .where(eq(invoices.teamId, teamId));
+
+      nextNumber = (countResult[0]?.count ?? 0) + 1;
+    }
+  } else {
+    // No invoices with numeric suffix found, count total invoices + 1
+    const countResult = await db
+      .select({ count: count() })
+      .from(invoices)
+      .where(eq(invoices.teamId, teamId));
+
+    nextNumber = (countResult[0]?.count ?? 0) + 1;
   }
 
-  return row.next_invoice_number as string;
+  // Pad with leading zeros
+  const paddedNumber = nextNumber.toString().padStart(PAD_LENGTH, "0");
+
+  return `${PREFIX}${paddedNumber}`;
 }
 
 export async function isInvoiceNumberUsed(
@@ -663,7 +791,10 @@ type DraftInvoiceParams = {
   userId: string;
 };
 
-export async function draftInvoice(db: Database, params: DraftInvoiceParams) {
+export async function draftInvoice(
+  db: DatabaseOrTransaction,
+  params: DraftInvoiceParams,
+) {
   const {
     id,
     teamId,
@@ -706,6 +837,12 @@ export async function draftInvoice(db: Database, params: DraftInvoiceParams) {
         token: useToken,
         templateId,
         ...restInput,
+        // Revert overdue to unpaid when due date is moved to the future
+        status: sql`CASE
+          WHEN ${invoices.status} = 'overdue' AND ${restInput.dueDate}::timestamp >= now()
+          THEN 'unpaid'
+          ELSE ${invoices.status}
+        END`,
         currency: template.currency?.toUpperCase(),
         template: camelcaseKeys(restTemplate, { deep: true }),
         paymentDetails: paymentDetails,
@@ -739,12 +876,10 @@ export async function getInvoiceSummary(
 
   const whereConditions: SQL[] = [eq(invoices.teamId, teamId)];
 
-  // Handle multiple statuses
   if (statuses && statuses.length > 0) {
     whereConditions.push(inArray(invoices.status, statuses));
   }
 
-  // Get team's base currency
   const [team] = await db
     .select({ baseCurrency: teams.baseCurrency })
     .from(teams)
@@ -753,16 +888,18 @@ export async function getInvoiceSummary(
 
   const baseCurrency = team?.baseCurrency || "USD";
 
-  // Get all invoices with their amounts and currencies
-  const invoiceData = await db
+  // Aggregate in SQL — returns one row per currency instead of one row per invoice
+  const currencyTotals = await db
     .select({
-      amount: invoices.amount,
       currency: invoices.currency,
+      totalAmount: sql<string>`COALESCE(SUM(${invoices.amount}), 0)`,
+      invoiceCount: count(),
     })
     .from(invoices)
-    .where(and(...whereConditions));
+    .where(and(...whereConditions))
+    .groupBy(invoices.currency);
 
-  if (invoiceData.length === 0) {
+  if (currencyTotals.length === 0) {
     return {
       totalAmount: 0,
       invoiceCount: 0,
@@ -770,84 +907,70 @@ export async function getInvoiceSummary(
     };
   }
 
-  // Convert all amounts to base currency and track currency breakdown
-  let totalAmount = 0;
-  const currencyBreakdown = new Map<
-    string,
-    { amount: number; count: number; convertedAmount: number }
-  >();
+  const foreignCurrencies = currencyTotals
+    .map((row) => row.currency || baseCurrency)
+    .filter((c) => c !== baseCurrency);
 
-  for (const invoice of invoiceData) {
-    const amount = Number(invoice.amount) || 0;
-    const currency = invoice.currency || baseCurrency;
-
-    if (currency === baseCurrency) {
-      totalAmount += amount;
-      const existing = currencyBreakdown.get(currency) || {
-        amount: 0,
-        count: 0,
-        convertedAmount: 0,
-      };
-      currencyBreakdown.set(currency, {
-        amount: existing.amount + amount,
-        count: existing.count + 1,
-        convertedAmount: existing.convertedAmount + amount,
-      });
-    } else {
-      // Get exchange rate for this currency to base currency
-      const [exchangeRate] = await db
-        .select({ rate: exchangeRates.rate })
-        .from(exchangeRates)
-        .where(
-          and(
-            eq(exchangeRates.base, currency),
-            eq(exchangeRates.target, baseCurrency),
-          ),
-        )
-        .limit(1);
-
-      if (exchangeRate?.rate) {
-        const convertedAmount = amount * Number(exchangeRate.rate);
-        totalAmount += convertedAmount;
-
-        const existing = currencyBreakdown.get(currency) || {
-          amount: 0,
-          count: 0,
-          convertedAmount: 0,
-        };
-        currencyBreakdown.set(currency, {
-          amount: existing.amount + amount,
-          count: existing.count + 1,
-          convertedAmount: existing.convertedAmount + convertedAmount,
-        });
-      }
-      // Skip invoices with missing exchange rates to avoid mixing currencies
-      // This prevents silently producing incorrect totals
+  const rateMap = new Map<string, number>();
+  if (foreignCurrencies.length > 0) {
+    const pairs = foreignCurrencies.map((c) => ({
+      base: c,
+      target: baseCurrency,
+    }));
+    const batchRates = await getExchangeRatesBatch(db, { pairs });
+    for (const [key, rate] of batchRates) {
+      const base = key.split(":")[0];
+      if (base) rateMap.set(base, rate);
     }
   }
 
-  // Convert breakdown to array and sort by amount (descending)
-  const breakdown = Array.from(currencyBreakdown.entries())
-    .map(([currency, data]) => ({
-      currency,
-      originalAmount: Math.round(data.amount * 100) / 100,
-      convertedAmount: Math.round(data.convertedAmount * 100) / 100,
-      count: data.count,
-    }))
-    .sort((a, b) => b.originalAmount - a.originalAmount);
+  let totalAmount = 0;
+  let invoiceCount = 0;
+  const breakdown: Array<{
+    currency: string;
+    originalAmount: number;
+    convertedAmount: number;
+    count: number;
+  }> = [];
 
-  // Count only invoices that were successfully included in the calculation
-  // (i.e., invoices with valid exchange rates or in base currency)
-  const invoiceCount = Array.from(currencyBreakdown.values()).reduce(
-    (sum, data) => sum + data.count,
-    0,
-  );
+  for (const row of currencyTotals) {
+    const currency = row.currency || baseCurrency;
+    const amount = Number(row.totalAmount) || 0;
+    const rowCount = Number(row.invoiceCount) || 0;
+
+    if (currency === baseCurrency) {
+      totalAmount += amount;
+      breakdown.push({
+        currency,
+        originalAmount: Math.round(amount * 100) / 100,
+        convertedAmount: Math.round(amount * 100) / 100,
+        count: rowCount,
+      });
+      invoiceCount += rowCount;
+    } else {
+      const rate = rateMap.get(currency);
+      if (rate) {
+        const convertedAmount = amount * rate;
+        totalAmount += convertedAmount;
+        breakdown.push({
+          currency,
+          originalAmount: Math.round(amount * 100) / 100,
+          convertedAmount: Math.round(convertedAmount * 100) / 100,
+          count: rowCount,
+        });
+        invoiceCount += rowCount;
+      }
+      // Skip currencies with missing exchange rates to avoid mixing currencies
+    }
+  }
+
+  breakdown.sort((a, b) => b.originalAmount - a.originalAmount);
 
   return {
-    totalAmount: Math.round(totalAmount * 100) / 100, // Round to 2 decimal places
+    totalAmount: Math.round(totalAmount * 100) / 100,
     invoiceCount,
     currency: baseCurrency,
-    breakdown: breakdown.length > 1 ? breakdown : undefined, // Only include if multiple currencies
+    breakdown: breakdown.length > 1 ? breakdown : undefined,
   };
 }
 
@@ -976,11 +1099,20 @@ export type UpdateInvoiceParams = {
   scheduledJobId?: string | null;
   paymentIntentId?: string | null;
   refundedAt?: string | null;
+  sentTo?: string | null;
+  sentAt?: string | null;
+  filePath?: string[] | null;
+  fileSize?: number | null;
+  invoiceRecurringId?: string | null;
+  recurringSequence?: number | null;
   teamId: string;
   userId?: string;
 };
 
-export async function updateInvoice(db: Database, params: UpdateInvoiceParams) {
+export async function updateInvoice(
+  db: DatabaseOrTransaction,
+  params: UpdateInvoiceParams,
+) {
   const { id, teamId, userId, ...rest } = params;
 
   const [result] = await db
@@ -991,7 +1123,7 @@ export async function updateInvoice(db: Database, params: UpdateInvoiceParams) {
 
   // Log activity if not draft
   if (rest.status !== "draft" && userId) {
-    let priority: number | undefined = undefined;
+    let priority: number | undefined;
     let activityType: (typeof activityTypeEnum.enumValues)[number] | null =
       null;
 
@@ -1118,7 +1250,12 @@ export async function getInactiveClientsCount(
             ),
           ),
         )
-        .where(eq(customers.teamId, teamId))
+        .where(
+          and(
+            eq(customers.teamId, teamId),
+            lt(customers.createdAt, thirtyDaysAgo.toISOString()),
+          ),
+        )
         .groupBy(customers.id)
         .having(
           sql`COUNT(DISTINCT ${invoices.id}) = 0 AND COALESCE(SUM(${trackerEntries.duration}), 0) = 0`,
@@ -1300,7 +1437,7 @@ export async function getInvoicePaymentAnalysis(
       (inv.status === "overdue" ||
         (inv.status === "unpaid" &&
           inv.dueDate &&
-          new Date(inv.dueDate) < new Date())) &&
+          parseISO(inv.dueDate) < new Date())) &&
       !inv.paidAt,
   );
 
@@ -1314,7 +1451,7 @@ export async function getInvoicePaymentAnalysis(
         invoice.issueDate || invoice.createdAt || invoice.dueDate;
       if (issueDate) {
         const daysToPay =
-          (new Date(invoice.paidAt).getTime() - new Date(issueDate).getTime()) /
+          (new Date(invoice.paidAt).getTime() - parseISO(issueDate).getTime()) /
           (1000 * 60 * 60 * 24);
         if (daysToPay >= 0) {
           totalDaysToPay += daysToPay;
@@ -1373,7 +1510,7 @@ export async function getInvoicePaymentAnalysis(
     const monthInvoices = allInvoices.filter((inv) => {
       const invDate = inv.createdAt || inv.issueDate;
       if (!invDate) return false;
-      const invDateObj = new Date(invDate);
+      const invDateObj = parseISO(invDate);
       return invDateObj >= monthStart && invDateObj <= monthEnd;
     });
 
@@ -1388,7 +1525,7 @@ export async function getInvoicePaymentAnalysis(
         if (issueDate) {
           const daysToPay =
             (new Date(invoice.paidAt).getTime() -
-              new Date(issueDate).getTime()) /
+              parseISO(issueDate).getTime()) /
             (1000 * 60 * 60 * 24);
           if (daysToPay >= 0) {
             monthTotalDays += daysToPay;
@@ -1419,7 +1556,7 @@ export async function getInvoicePaymentAnalysis(
   for (const invoice of overdueInvoices) {
     if (invoice.dueDate) {
       const daysOverdue =
-        (now.getTime() - new Date(invoice.dueDate).getTime()) /
+        (now.getTime() - parseISO(invoice.dueDate).getTime()) /
         (1000 * 60 * 60 * 24);
       oldestDays = Math.max(oldestDays, Math.round(daysOverdue));
     }

@@ -1,12 +1,13 @@
 "use client";
 
-import { useTRPC } from "@/trpc/client";
 import { Button } from "@midday/ui/button";
 import { Spinner } from "@midday/ui/spinner";
 import { Table, TableBody, TableCell, TableRow } from "@midday/ui/table";
 import { formatDate } from "@midday/utils/format";
 import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
 import { FormatAmount } from "../../format-amount";
 import { OrderStatus } from "../../order-status";
 import { ActionsMenu } from "./actions-menu";
@@ -14,6 +15,7 @@ import { OrdersTableHeader } from "./table-header";
 
 export function OrdersDataTable() {
   const trpc = useTRPC();
+  const { data: user } = useUserQuery();
 
   const infiniteQueryOptions = trpc.billing.orders.infiniteQueryOptions(
     {
@@ -48,8 +50,7 @@ export function OrdersDataTable() {
                 <TableCell className="w-[120px] text-sm text-muted-foreground">
                   {formatDate(
                     order.createdAt.toISOString(),
-                    "MMM, yyyy",
-                    false,
+                    user?.dateFormat ?? "MMM, yyyy",
                   )}
                 </TableCell>
                 <TableCell className="w-[100px] font-medium">

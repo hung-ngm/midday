@@ -1,6 +1,3 @@
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
-import { secondsToHoursAndMinutes } from "@/utils/format";
 import { Button } from "@midday/ui/button";
 import { Calendar } from "@midday/ui/calendar";
 import {
@@ -11,10 +8,13 @@ import {
   DropdownMenuSubTrigger,
 } from "@midday/ui/dropdown-menu";
 import { useQueryClient } from "@tanstack/react-query";
-import { endOfMonth, format, startOfMonth } from "date-fns";
+import { endOfMonth, format, parseISO, startOfMonth } from "date-fns";
 import Papa from "papaparse";
-import React, { useState } from "react";
+import { useState } from "react";
 import type { DateRange } from "react-day-picker";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
+import { secondsToHoursAndMinutes } from "@/utils/format";
 
 interface TrackerEntry {
   date: string;
@@ -52,7 +52,7 @@ export function TrackerExportCSV({ name, projectId }: Props) {
 
     const formattedData = entries.map((item: TrackerEntry) => {
       const formattedItem: Record<string, string | null> = {
-        Date: format(new Date(item.date), user?.dateFormat ?? "P"),
+        Date: format(parseISO(item.date), user?.dateFormat ?? "P"),
         Description: item.description ?? null,
         Time: secondsToHoursAndMinutes(item.duration ?? 0),
         Assigned: item.assigned?.full_name ?? null,

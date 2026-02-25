@@ -1,5 +1,15 @@
 "use client";
 
+import { ScrollArea } from "@midday/ui/scroll-area";
+import {
+  useQueryClient,
+  useSuspenseInfiniteQuery,
+} from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useHotkeys } from "react-hotkeys-hook";
+import { useInView } from "react-intersection-observer";
+import { useBoolean, useCounter, useDebounceCallback } from "usehooks-ts";
 import { LoadMore } from "@/components/load-more";
 import { useInboxFilterParams } from "@/hooks/use-inbox-filter-params";
 import { useInboxParams } from "@/hooks/use-inbox-params";
@@ -8,19 +18,9 @@ import { useRealtime } from "@/hooks/use-realtime";
 import { useUserQuery } from "@/hooks/use-user";
 import { useInboxStore } from "@/store/inbox";
 import { useTRPC } from "@/trpc/client";
-import { ScrollArea } from "@midday/ui/scroll-area";
-import {
-  useQueryClient,
-  useSuspenseInfiniteQuery,
-} from "@tanstack/react-query";
-import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useRef } from "react";
-import { useHotkeys } from "react-hotkeys-hook";
-import { useInView } from "react-intersection-observer";
-import { useBoolean, useCounter, useDebounceCallback } from "usehooks-ts";
 import { InboxBulkActions } from "./inbox-bulk-actions";
 import { InboxDetails } from "./inbox-details";
-import { NoResults } from "./inbox-empty";
+import { InboxConnectedEmpty, InboxOtherEmpty, NoResults } from "./inbox-empty";
 import { InboxItem } from "./inbox-item";
 import { InboxViewSkeleton } from "./inbox-skeleton";
 
@@ -44,11 +44,28 @@ export function InboxView() {
   const scrollAreaViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollRef = useRef(false);
 
+  // State to track if timeout has been reached (for showing empty state)
+  const [hasTimedOut, setHasTimedOut] = useState(false);
+
+  // Capture the "just connected" state locally so it persists even after URL params are cleared
+  // (AppConnectionToast clears params after 100ms, but we need this state for the 60s timeout)
+  const [wasJustConnected, setWasJustConnected] = useState(
+    () => params.connected === true,
+  );
+
+  // Update local state when params.connected becomes truthy
+  useEffect(() => {
+    if (params.connected === true) {
+      setWasJustConnected(true);
+    }
+  }, [params.connected]);
+
   const infiniteQueryOptions = trpc.inbox.get.infiniteQueryOptions(
     {
       order: params.order,
       sort: params.sort,
       ...filter,
+      tab: filter.tab ?? "all", // Default to "all" tab
     },
     {
       getNextPageParam: ({ meta }) => meta?.cursor,
@@ -61,6 +78,35 @@ export function InboxView() {
   const tableData = useMemo(() => {
     return data?.pages.flatMap((page) => page.data) ?? [];
   }, [data]);
+
+  // Clear the "just connected" state once we have data or timeout fires
+  useEffect(() => {
+    if (wasJustConnected && (tableData.length > 0 || hasTimedOut)) {
+      setWasJustConnected(false);
+    }
+    // Reset hasTimedOut when data arrives after timeout - prevents showing
+    // InboxConnectedEmpty if user later deletes all items
+    if (hasTimedOut && tableData.length > 0) {
+      setHasTimedOut(false);
+    }
+  }, [wasJustConnected, tableData.length, hasTimedOut]);
+
+  // Timeout configuration - wait 1 minute for sync to complete
+  const SYNC_TIMEOUT = 60 * 1000; // 1 minute
+
+  // Set up timeout to show empty state if no items appear
+  useEffect(() => {
+    // Only set timeout if user just connected and no items yet
+    if (!wasJustConnected || tableData.length > 0 || hasTimedOut) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setHasTimedOut(true);
+    }, SYNC_TIMEOUT);
+
+    return () => clearTimeout(timeout);
+  }, [wasJustConnected, tableData.length, hasTimedOut]);
 
   // Enhanced batching mechanism using usehooks-ts
   const {
@@ -175,19 +221,32 @@ export function InboxView() {
   }, [tableData]);
 
   useEffect(() => {
-    if (!params.inboxId && tableData.length > 0) {
+    if (tableData.length > 0) {
+      const currentInList = tableData.some(
+        (item) => item.id === params.inboxId,
+      );
+
+      // Auto-select first item if nothing selected or current selection isn't in the list
+      if (!params.inboxId || !currentInList) {
+        setParams({
+          ...params,
+          inboxId: tableData.at(0)?.id,
+        });
+      }
+    } else if (params.inboxId) {
+      // Clear selection when list is empty
       setParams({
         ...params,
-        inboxId: tableData.at(0)?.id,
+        inboxId: null,
       });
     }
   }, [tableData, params.inboxId, setParams]);
 
-  // Clear lastClickedIndex when sort/filter params change
+  // Clear lastClickedIndex when sort/filter/tab params change
   // since item positions in tableData will change
   useEffect(() => {
     setLastClickedIndex(null);
-  }, [params.sort, params.order, filter.q, filter.status]);
+  }, [params.sort, params.order, filter.q, filter.status, filter.tab]);
 
   // Arrow key navigation
   useHotkeys(
@@ -286,9 +345,22 @@ export function InboxView() {
     });
   }, [params.inboxId, tableData]);
 
-  // If user is connected, and we don't have any data, we need to show a skeleton
-  if (params.connected && !tableData?.length) {
+  // If user just connected and no items yet, show skeleton while waiting for sync
+  // (realtime will push items if found, timeout will trigger empty state if not)
+  if (wasJustConnected && !tableData?.length && !hasTimedOut) {
     return <InboxViewSkeleton />;
+  }
+
+  // If timeout reached with no items, show connected empty state (only on "all" tab)
+  const isAllTab = !filter.tab || filter.tab === "all";
+
+  if (isAllTab && hasTimedOut && !tableData?.length && !hasFilter) {
+    return <InboxConnectedEmpty />;
+  }
+
+  // Show empty state for "other" tab when no items
+  if (!isAllTab && !tableData?.length && !hasFilter) {
+    return <InboxOtherEmpty />;
   }
 
   if (hasFilter && !tableData?.length) {

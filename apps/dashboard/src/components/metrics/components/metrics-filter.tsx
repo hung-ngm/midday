@@ -1,9 +1,5 @@
 "use client";
 
-import { useMetricsFilter } from "@/hooks/use-metrics-filter";
-import { useTeamQuery } from "@/hooks/use-team";
-import { useTRPC } from "@/trpc/client";
-import type { PeriodOption } from "@/utils/metrics-date-utils";
 import { Button } from "@midday/ui/button";
 import { Calendar, CalendarDayButton } from "@midday/ui/calendar";
 import { cn } from "@midday/ui/cn";
@@ -24,13 +20,19 @@ import {
 import { Icons } from "@midday/ui/icons";
 import { CheckIcon } from "@radix-ui/react-icons";
 import { useQuery } from "@tanstack/react-query";
-import { format, formatISO } from "date-fns";
+import { format, formatISO, parseISO } from "date-fns";
 import { useState } from "react";
 import type { DateRange } from "react-day-picker";
+import { useMetricsFilter } from "@/hooks/use-metrics-filter";
+import { useTeamQuery } from "@/hooks/use-team";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
+import type { PeriodOption } from "@/utils/metrics-date-utils";
 
 const PERIOD_OPTIONS: Array<{ value: PeriodOption; label: string }> = [
   { value: "3-months", label: "3 months" },
   { value: "6-months", label: "6 months" },
+  { value: "this-year", label: "This year" },
   { value: "1-year", label: "1 year" },
   { value: "2-years", label: "2 years" },
   { value: "5-years", label: "5 years" },
@@ -45,6 +47,7 @@ const REVENUE_TYPE_OPTIONS: Array<{ value: "gross" | "net"; label: string }> = [
 
 export function MetricsFilter() {
   const { data: team } = useTeamQuery();
+  const { data: user } = useUserQuery();
   const trpc = useTRPC();
   const {
     period,
@@ -79,8 +82,8 @@ export function MetricsFilter() {
   const dateRange: DateRange | undefined =
     from && to
       ? {
-          from: new Date(from),
-          to: new Date(to),
+          from: parseISO(from),
+          to: parseISO(to),
         }
       : undefined;
 
@@ -149,6 +152,7 @@ export function MetricsFilter() {
                   <DropdownMenuSubContent className="w-auto p-0" sideOffset={8}>
                     <Calendar
                       mode="range"
+                      weekStartsOn={user?.weekStartsOnMonday ? 1 : 0}
                       selected={dateRange}
                       onSelect={handleCustomDateSelect}
                       disabled={(date) => date > new Date()}

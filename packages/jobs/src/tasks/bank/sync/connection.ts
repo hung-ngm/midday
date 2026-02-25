@@ -1,7 +1,7 @@
 import { syncConnectionSchema } from "@jobs/schema";
 import { triggerSequenceAndWait } from "@jobs/utils/trigger-sequence";
-import { client } from "@midday/engine-client";
 import { createClient } from "@midday/supabase/job";
+import { trpc } from "@midday/trpc";
 import { logger, schemaTask } from "@trigger.dev/sdk";
 import { transactionNotifications } from "../notifications/transactions";
 import { syncAccount } from "./account";
@@ -30,26 +30,24 @@ export const syncConnection = schemaTask({
         throw new Error("Connection not found");
       }
 
-      const connectionResponse = await client.connections.status.$get({
-        query: {
-          id: data.reference_id!,
-          provider: data.provider as
-            | "gocardless"
-            | "plaid"
-            | "teller"
-            | "enablebanking", // Pluggy not supported yet
-          accessToken: data.access_token ?? undefined,
-        },
+      const connectionResult = await trpc.banking.connectionStatus.query({
+        id: data.reference_id ?? undefined,
+        provider: data.provider as
+          | "gocardless"
+          | "plaid"
+          | "teller"
+          | "enablebanking",
+        accessToken: data.access_token ?? undefined,
       });
 
-      logger.info("Connection response", { connectionResponse });
+      logger.info("Connection response", { connectionResult });
 
-      if (!connectionResponse.ok) {
+      const connectionData = connectionResult.data;
+
+      if (!connectionData) {
         logger.error("Failed to get connection status");
         throw new Error("Failed to get connection status");
       }
-
-      const { data: connectionData } = await connectionResponse.json();
 
       if (connectionData.status === "connected") {
         await supabase
@@ -63,7 +61,7 @@ export const syncConnection = schemaTask({
         const query = supabase
           .from("bank_accounts")
           .select(
-            "id, team_id, account_id, type, bank_connection:bank_connection_id(id, provider, access_token, status)",
+            "id, team_id, account_id, type, currency, bank_connection:bank_connection_id(id, provider, access_token, status)",
           )
           .eq("bank_connection_id", connectionId)
           .eq("enabled", true)
@@ -90,6 +88,7 @@ export const syncConnection = schemaTask({
           connectionId: account.bank_connection?.id,
           teamId: account.team_id,
           accountType: account.type ?? "depository",
+          currency: account.currency ?? undefined,
           manualSync,
         }));
 
@@ -157,7 +156,19 @@ export const syncConnection = schemaTask({
           .eq("id", connectionId);
       }
     } catch (error) {
-      logger.error("Failed to sync connection", { error });
+      const errorDetails: Record<string, unknown> = {
+        connectionId,
+        message: error instanceof Error ? error.message : String(error),
+        name: error instanceof Error ? error.name : undefined,
+      };
+
+      if (error instanceof Error && "cause" in error && error.cause) {
+        const cause = error.cause as Error;
+        errorDetails.cause = cause.message ?? String(cause);
+        errorDetails.causeCode = (cause as NodeJS.ErrnoException).code;
+      }
+
+      logger.error("Failed to sync connection", errorDetails);
 
       throw error;
     }

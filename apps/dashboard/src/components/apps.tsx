@@ -1,14 +1,16 @@
 "use client";
 
-import { ConnectWhatsApp } from "@/components/inbox/connect-whatsapp";
-import { useUserQuery } from "@/hooks/use-user";
-import { useTRPC } from "@/trpc/client";
 import { apps as appStoreApps } from "@midday/app-store";
 import type { UnifiedApp } from "@midday/app-store/types";
 import { Button } from "@midday/ui/button";
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
+import { AppConnectionToast } from "@/components/app-connection-toast";
+import { ConnectWhatsApp } from "@/components/inbox/connect-whatsapp";
+import { useUserQuery } from "@/hooks/use-user";
+import { useTRPC } from "@/trpc/client";
+import { isOAuthMessage } from "@/utils/oauth-message";
 import { UnifiedAppComponent } from "./unified-app";
 
 export function Apps() {
@@ -20,16 +22,13 @@ export function Apps() {
   // Global listener for OAuth completion messages
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
-      if (e.data === "app_oauth_completed") {
-        // Invalidate queries to refresh app status
+      if (isOAuthMessage(e.data) && e.data.type === "app_oauth_completed") {
         queryClient.invalidateQueries({
           queryKey: trpc.apps.get.queryKey(),
         });
-        // Also invalidate inbox accounts for Gmail/Outlook status
         queryClient.invalidateQueries({
           queryKey: trpc.inboxAccounts.get.queryKey(),
         });
-        // Also invalidate Stripe status for Stripe Payments app
         queryClient.invalidateQueries({
           queryKey: trpc.invoicePayments.stripeStatus.queryKey(),
         });
@@ -37,9 +36,7 @@ export function Apps() {
     };
 
     window.addEventListener("message", handleMessage);
-    return () => {
-      window.removeEventListener("message", handleMessage);
-    };
+    return () => window.removeEventListener("message", handleMessage);
   }, [queryClient, trpc]);
 
   // Fetch from both endpoints
@@ -180,6 +177,8 @@ export function Apps() {
 
   return (
     <>
+      <AppConnectionToast />
+
       <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 mx-auto mt-8">
         {filteredApps.map((app) => (
           <UnifiedAppComponent

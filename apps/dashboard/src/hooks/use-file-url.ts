@@ -1,5 +1,5 @@
-import { useUserQuery } from "@/hooks/use-user";
 import { useMemo } from "react";
+import { useUserQuery } from "@/hooks/use-user";
 
 type FileUrlOptions =
   | {
@@ -10,6 +10,7 @@ type FileUrlOptions =
   | {
       type: "invoice";
       invoiceId: string;
+      isReceipt?: boolean;
     }
   | {
       type: "url";
@@ -38,16 +39,6 @@ export function useFileUrl(options: FileUrlOptions | null) {
     if (options.type === "url") {
       // Handle relative URLs (starting with /) differently from absolute URLs
       if (options.url.startsWith("/")) {
-        // Relative URL - check if it's a local preview route (uses session auth)
-        if (options.url.startsWith("/api/files/preview")) {
-          // Local preview route uses session authentication, no fileKey needed
-          return {
-            url: options.url,
-            isLoading: false,
-            hasFileKey: false,
-          };
-        }
-        // Other relative URLs - parse query params manually
         const [pathname, search] = options.url.split("?");
         const params = new URLSearchParams(search);
         if (user?.fileKey) {
@@ -89,6 +80,9 @@ export function useFileUrl(options: FileUrlOptions | null) {
       const url = new URL(baseUrl);
       url.searchParams.set("id", options.invoiceId);
       url.searchParams.set("fk", user.fileKey);
+      if (options.isReceipt) {
+        url.searchParams.set("type", "receipt");
+      }
       return {
         url: url.toString(),
         isLoading: false,

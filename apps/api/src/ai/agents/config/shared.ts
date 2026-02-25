@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { openai } from "@ai-sdk/openai";
 import { Agent, type AgentConfig } from "@ai-sdk-tools/agents";
 import { RedisProvider } from "@ai-sdk-tools/memory/redis";
-import { openai } from "@ai-sdk/openai";
+import { createRedisAdapter } from "@midday/cache/bun-redis-adapter";
 import type { ChatUserContext } from "@midday/cache/chat-cache";
-import { getSharedRedisClient } from "@midday/cache/shared-redis";
 
 const memoryTemplate = readFileSync(
   join(process.cwd(), "src/ai/agents/config/memory-template.md"),
@@ -43,6 +43,27 @@ export const COMMON_AGENT_RULES = `<behavior_rules>
 - Tables make data scannable and easier to compare - use them for any data with 2+ rows
 </behavior_rules>`;
 
+/**
+ * Dashboard metrics filter state - source of truth for AI tool defaults.
+ * When present, tools use these values unless explicitly overridden.
+ */
+export interface MetricsFilter {
+  period: string; // "1-year", "6-months", etc.
+  from: string; // yyyy-MM-dd
+  to: string; // yyyy-MM-dd
+  currency?: string;
+  revenueType: "gross" | "net";
+}
+
+/**
+ * Forced tool call from widget click - bypasses AI parameter decisions.
+ * When present for a matching tool, these params are used directly.
+ */
+export interface ForcedToolCall {
+  toolName: string;
+  toolParams: Record<string, unknown>;
+}
+
 export interface AppContext {
   userId: string;
   fullName: string;
@@ -57,6 +78,19 @@ export interface AppContext {
   chatId: string;
   fiscalYearStartMonth?: number | null;
   hasBankAccounts?: boolean;
+
+  /**
+   * Dashboard metrics filter state (source of truth for defaults).
+   * Tools use these values when no explicit params are provided.
+   */
+  metricsFilter?: MetricsFilter;
+
+  /**
+   * Forced tool params from widget click (bypasses AI decisions).
+   * When a widget sends toolParams, they're stored here and used directly.
+   */
+  forcedToolCall?: ForcedToolCall;
+
   // Allow additional properties to satisfy Record<string, unknown> constraint
   [key: string]: unknown;
 }
@@ -64,6 +98,10 @@ export interface AppContext {
 export function buildAppContext(
   context: ChatUserContext,
   chatId: string,
+  options?: {
+    metricsFilter?: MetricsFilter;
+    forcedToolCall?: ForcedToolCall;
+  },
 ): AppContext {
   // Combine userId and teamId to scope chats by both user and team
   const scopedUserId = `${context.userId}:${context.teamId}`;
@@ -84,10 +122,13 @@ export function buildAppContext(
     teamId: context.teamId,
     fiscalYearStartMonth: context.fiscalYearStartMonth ?? undefined,
     hasBankAccounts: context.hasBankAccounts ?? false,
+    // Dashboard filter state and forced tool params
+    metricsFilter: options?.metricsFilter,
+    forcedToolCall: options?.forcedToolCall,
   };
 }
 
-export const memoryProvider = new RedisProvider(getSharedRedisClient());
+export const memoryProvider = new RedisProvider(createRedisAdapter() as any);
 
 export const createAgent = (config: AgentConfig<AppContext>) => {
   return new Agent({

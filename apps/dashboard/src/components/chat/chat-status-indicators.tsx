@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader } from "@midday/ui/loader";
 import { AnimatedStatus } from "@/components/animated-status";
 import {
   getArtifactSectionMessageForStatus,
@@ -10,12 +11,11 @@ import {
 import {
   type ArtifactStage,
   type ArtifactType,
-  TOOL_TO_ARTIFACT_MAP,
   getArtifactTypeFromTool,
+  TOOL_TO_ARTIFACT_MAP,
 } from "@/lib/artifact-config";
 import { getToolIcon } from "@/lib/tool-config";
 import type { AgentStatus } from "@/types/agents";
-import { Loader } from "@midday/ui/loader";
 
 interface ChatStatusIndicatorsProps {
   agentStatus: AgentStatus | null;
@@ -26,6 +26,7 @@ interface ChatStatusIndicatorsProps {
   currentSection?: string | null;
   bankAccountRequired?: boolean;
   hasTextContent?: boolean;
+  hasInsightData?: boolean;
 }
 
 export function ChatStatusIndicators({
@@ -37,9 +38,10 @@ export function ChatStatusIndicators({
   currentSection,
   bankAccountRequired = false,
   hasTextContent = false,
+  hasInsightData = false,
 }: ChatStatusIndicatorsProps) {
-  // Don't show status indicators when bank account is required
-  if (bankAccountRequired) {
+  // Don't show status indicators when bank account is required or when insight data is being displayed
+  if (bankAccountRequired || hasInsightData) {
     return null;
   }
   const statusMessage = getStatusMessage(agentStatus);

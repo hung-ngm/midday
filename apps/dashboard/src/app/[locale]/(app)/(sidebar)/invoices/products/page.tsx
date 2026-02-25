@@ -1,8 +1,10 @@
+import type { Metadata } from "next";
+import { ErrorBoundary } from "next/dist/client/components/error-boundary";
+import { Suspense } from "react";
+import { ErrorFallback } from "@/components/error-fallback";
 import { ProductsSkeleton } from "@/components/tables/products/skeleton";
 import { DataTable } from "@/components/tables/products/table";
 import { prefetch, trpc } from "@/trpc/server";
-import type { Metadata } from "next";
-import { Suspense } from "react";
 
 export const metadata: Metadata = {
   title: "Products | Midday",
@@ -19,9 +21,11 @@ export default function Page() {
 
   return (
     <div className="max-w-screen-lg">
-      <Suspense fallback={<ProductsSkeleton />}>
-        <DataTable />
-      </Suspense>
+      <ErrorBoundary errorComponent={ErrorFallback}>
+        <Suspense fallback={<ProductsSkeleton />}>
+          <DataTable />
+        </Suspense>
+      </ErrorBoundary>
     </div>
   );
 }

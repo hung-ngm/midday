@@ -4,7 +4,7 @@ import { Logo } from "./assets/logo";
 export const baseConfig = {
   name: "Fortnox",
   id: "fortnox",
-  category: "Accounting",
+  category: "accounting",
   active: true,
   beta: true,
   logo: Logo,
@@ -15,4 +15,3 @@ export const baseConfig = {
   settings: [],
   config: {},
 };
-
